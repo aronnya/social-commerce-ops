@@ -2,6 +2,12 @@
 
 This document is the living explanation of how the system is built. It is written so a beginner can defend the project in an internship interview.
 
+## Product principle
+
+Every major screen should help the user perform or understand an operational task. The platform should not become CRUD for its own sake. Data storage supports workflows, automation, exception handling and decision-making.
+
+REST list/create/update endpoints will exist because the workflow needs records. They are not the product. The valuable behaviour is coordinating preorders, supplier orders, payments, inventory, exceptions, and (later) demand decisions.
+
 ## High-level architecture
 
 One web app, two processes, one database:
@@ -51,9 +57,11 @@ Later backend folders (not created until needed):
 
 - `app/models/` — SQLAlchemy tables
 - `app/schemas/` — Pydantic request/response shapes
-- `app/api/` — HTTP routes
-- `app/services/` — business rules (state transitions, payment totals)
+- `app/api/` — HTTP routes (thin: validate input, call services, return results)
+- `app/services/` — business rules (state transitions, grouping into supplier orders, payment totals, reconciliation, inventory)
 - `alembic/` — database migrations
+
+Business rules belong in services (or equivalent domain functions), not only in React. The frontend should call operations such as “generate draft supplier order” or “record arrival”; it should not send arbitrary status strings the API blindly saves.
 
 ## Important entities and relationships (planned)
 
@@ -68,8 +76,9 @@ These tables are **not implemented yet**. They are the intended relational model
 | `preorders` | A customer commitment to buy a catalogue item |
 | `payments` | Individual transfers (bank / Revolut). Separate from preorder status. |
 | `supplier_orders` | A batch sent to a supplier |
-| `supplier_order_lines` | Rows on that batch (for preorders and/or stock buys) |
+| `supplier_order_lines` | Consolidated rows on that batch, with links back to preorders and/or stock buys |
 | `inventory_lots` | Physical stock the business owns |
+| `workflow_events` | Later: audit trail of important workflow changes |
 
 Relationships in plain English:
 
@@ -78,10 +87,11 @@ Relationships in plain English:
 - A customer has many enquiries and many preorders.
 - An enquiry is about one product and one customer. It may later link to a preorder, or it may end with a lost-sale reason.
 - A preorder is for one customer and one product. It may come from an enquiry (optional, because walk-in sales exist).
-- A preorder may be attached to one supplier order once it is grouped for buying.
-- Payments belong to a preorder. Several payments can add up to the agreed price.
-- A supplier order has many lines. A line points at a product and optionally at a preorder.
-- An inventory lot points at a product and records quantity actually on hand. It may come from a supplier-order line.
+- A preorder may be attached to one **active** supplier order once it is grouped for buying. It must not be included in multiple active supplier orders.
+- Payments belong to a preorder. Several payments can add up to the agreed price. Payment status is calculated from those rows.
+- A supplier order has many lines. A line consolidates quantity for a product/variant, still pointing at the customer preorders (and optional inventory buys) it covers. Lines should be able to record ordered vs received quantity at reconciliation.
+- An inventory lot points at a product and records quantity actually on hand. Receiving a stock purchase increases it. Allocating or selling physical stock decreases it, and must not go below available quantity.
+- Workflow events (when added) point at the relevant entity and record what happened and when.
 
 Why enquiry and preorder are separate: analytics must count “people asked about this dress” even when they never ordered. If we only stored preorders, we would throw away lost-demand data.
 
@@ -89,9 +99,84 @@ Why payment status is not a preorder status: the dress can already be ordered fr
 
 Why supplier-order status is separate: one supplier shipment can cover many customer preorders. The shipment can be “dispatched” while an individual preorder is still “ordered from supplier”.
 
+## Operational behaviours (how the domain should work)
+
+These behaviours are the point of the architecture. They will be added milestone by milestone, not all in the first database slice.
+
+### Action / attention queue
+
+The API should eventually expose a derived queue (SQL over current state), not a separately maintained to-do table that can drift. Examples:
+
+- confirmed preorders not yet on a supplier order
+- supplier orders waiting for the next valid action
+- items in `ARRIVED` / `READY_FOR_CUSTOMER` waiting for collection or delivery
+- preorders with an outstanding balance
+- orders that may be delayed (once we have enough timestamps/events)
+
+The home screen’s job is: “What needs my attention today?”
+
+### Supplier order generation
+
+Confirmed preorders should be groupable **by supplier** into a `DRAFT` supplier order. The service should:
+
+- consolidate quantities for the same product/variant
+- keep links from the draft (and its lines) back to each customer preorder
+- leave the draft for the owner to review
+- only then allow marking the order `PLACED`
+
+This is a workflow operation, not “type a supplier order in a form from scratch” as the main path.
+
+### Payment calculation
+
+Prefer derived payment state from payment records:
+
+- total order amount (agreed selling price on the preorder)
+- amount paid (sum of payment rows)
+- outstanding balance
+- `UNPAID` / `PARTIALLY_PAID` / `PAID`
+
+Do not treat payment status as an unrelated dropdown. Refunds should later be first-class records that adjust the same calculations.
+
+### Supplier delivery reconciliation
+
+When a supplier order arrives, the owner reconciles ordered quantity vs received quantity per line. The service should:
+
+- flag missing or unavailable items
+- attach received units to the relevant customer preorders and/or increase inventory (for stock buys)
+- drive the related preorder transitions (`ARRIVED`, or a side outcome such as `SUPPLIER_UNAVAILABLE` when items will not come)
+
+### Inventory consequences
+
+Catalogue `products` and `inventory_lots` stay different tables. Rules:
+
+- receiving a stock purchase increases physical inventory
+- selling or allocating physical stock reduces available inventory
+- refuse allocations that exceed what is available
+
+Preorder fulfilment from a Pakistan shipment and fulfilment from local stock are both valid paths; only the local-stock path consumes inventory lots.
+
+### Workflow / business-rule enforcement
+
+Invalid operations should fail in the backend (clear HTTP errors), including:
+
+- illegal preorder or supplier-order transitions
+- attaching a preorder to a second active supplier order
+- over-allocating inventory
+- payments that would make totals inconsistent (for example ignoring the agreed amount)
+
+### Event / history tracking
+
+A `workflow_events` (or similarly named) history can be added when those operations exist. Examples of events: enquiry created, preorder confirmed, payment recorded, supplier order placed, supplier order dispatched, item arrived, customer notified, fulfilled. That trail later supports operational metrics (for example average time from confirmed to fulfilled). It is not required before the first CRUD tables exist.
+
+### Demand intelligence
+
+Keep analysing **enquiries** as well as completed sales. SQL aggregations should later cover conversion, lost-sale reasons, high-interest/low-conversion products, demand by style/colour/size/price/supplier/time, supplier performance, and candidates for local inventory. No machine learning in the MVP.
+
 ## Planned REST API
 
 Version prefix: `/api/v1`.
+
+Resource endpoints will exist for the entities above. In addition, the API should grow **operations** that encode the workflow:
 
 | Area | Endpoints (planned) |
 | --- | --- |
@@ -101,22 +186,27 @@ Version prefix: `/api/v1`.
 | Customers | `GET/POST /api/v1/customers`, `GET/PATCH /api/v1/customers/{id}` |
 | Enquiries | `GET/POST /api/v1/enquiries`, `PATCH` for outcome |
 | Preorders | `GET/POST /api/v1/preorders`, `POST /api/v1/preorders/{id}/transitions` |
-| Payments | `GET/POST /api/v1/preorders/{id}/payments` |
-| Supplier orders | `GET/POST /api/v1/supplier-orders`, lines, transitions |
-| Inventory | `GET /api/v1/inventory`, receive / adjust |
-| Analytics | `GET /api/v1/analytics/enquiries`, conversions, loss reasons, suppliers, prices |
+| Payments | `GET/POST /api/v1/preorders/{id}/payments` (status is derived, not PATCHed independently) |
+| Supplier orders | generate draft from confirmed preorders; lines; transitions; reconcile received quantities |
+| Inventory | list, receive, allocate (with availability checks) |
+| Attention | `GET /api/v1/attention` (or similar) — derived queue |
+| Analytics | `GET /api/v1/analytics/...` — enquiries, conversions, loss reasons, suppliers, prices |
+| Events | later: list history for an entity |
 
-Preorder status is **not** a free-form `PATCH`. A dedicated transition endpoint will check an allow-list of next states.
+Preorder status is **not** a free-form `PATCH`. A dedicated transition endpoint will check an allow-list of next states. The same idea applies to supplier-order status.
+
+Exact paths can be chosen when those milestones are built. Do not add messaging webhooks or PDF export in the core API.
 
 ## Request / data flow (once features exist)
 
-1. Owner records a catalogue product from a supplier photo.
+1. Owner records a catalogue product from a supplier photo (catalogue, not inventory).
 2. A customer enquiry is stored against that product (outcome may still be unknown).
 3. If they commit, a preorder is created (`CONFIRMED`) and the enquiry outcome becomes `PREORDERED`.
-4. Payments are recorded as they arrive; payment status is derived from paid total vs agreed price.
-5. Several preorders are grouped onto a supplier order (`DRAFT` → `PLACED` …).
-6. When goods arrive, inventory (if kept) and preorder statuses update (`ARRIVED` → `READY_FOR_CUSTOMER` → `FULFILLED`).
-7. Analytics queries group enquiries and preorders in SQL.
+4. Payments are recorded as they arrive; paid / outstanding / payment status are derived.
+5. The owner generates a draft supplier order from confirmed preorders for that supplier, reviews quantities, then marks it `PLACED`.
+6. On arrival, the owner reconciles received vs ordered quantities; received items update preorders and/or inventory.
+7. Ready items wait in the attention queue until collection/delivery (`FULFILLED`). Inventory-backed sales decrement available stock.
+8. Analytics queries group enquiries and preorders in SQL.
 
 ## State models (planned)
 
@@ -128,7 +218,7 @@ Also allowed as exits (exact edges to be coded later): `CANCELLED`, `SUPPLIER_UN
 
 ### Payment (derived from payment rows)
 
-`UNPAID` | `PARTIALLY_PAID` | `PAID` | `REFUNDED`
+`UNPAID` | `PARTIALLY_PAID` | `PAID` (refunds later, from refund records)
 
 ### Supplier order
 
@@ -153,6 +243,8 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 | Monolith API + SPA | Simple to run and explain | Not independently scalable (not needed) |
 | Enquiries ≠ preorders | Honest demand analytics | Extra table and a bit more API work |
 | Derived payment status | Totals cannot disagree with payment rows | Must recompute when payments change |
+| Operations in services | Rules stay testable and UI-independent | A bit more structure than “update the row” |
+| Derived attention queue | Cannot drift from real state | Queries must stay cheap and clear |
 | Hosted Postgres later (e.g. Supabase) | No local database install or Docker | Needs a connection string in `.env` when we start Milestone 2 |
 | No Redis | No caching/queue requirement yet | Fine at this scale |
 | Minimal UI until Figma | Avoid throwing away a fake dashboard | Early screens will look plain on purpose |
@@ -164,10 +256,19 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 - No product photos
 - Database is not used by the API yet
 - Frontend only checks that the API health endpoint responds
+- Attention queue, grouping, reconciliation, events, and analytics are specified, not built
 
-## Future improvements (not now)
+## Future improvements (explicitly not MVP / not core dependencies)
 
-Messenger / WhatsApp import, payment feed matching, image similarity search, forecasting, multi-user permissions.
+The domain must work without external messaging APIs.
+
+- Facebook Messenger integration
+- Supplier WhatsApp / WhatsApp Business integration
+- Automated bank-feed payment matching
+- PDF / exportable supplier order summaries
+- Visual product similarity / search
+- Advanced ML forecasting
+- Multi-user permissions
 
 ## Milestone 1 notes
 
@@ -180,4 +281,4 @@ Implemented:
 - pytest for the health endpoint
 - PostgreSQL planned, but no database connection yet
 
-Not implemented: SQLAlchemy models, Alembic, CRUD APIs.
+Not implemented: SQLAlchemy models, Alembic, CRUD APIs, or the operational services above.
