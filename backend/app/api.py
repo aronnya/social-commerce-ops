@@ -13,6 +13,9 @@ from app.schemas import (
     EnquiryOutcome,
     EnquiryRead,
     EnquiryUpdate,
+    PaymentCreate,
+    PaymentRead,
+    PaymentUpdate,
     PreorderCreate,
     PreorderRead,
     PreorderStatus,
@@ -207,6 +210,16 @@ def delete_enquiry(enquiry_id: int, db: Session = Depends(get_db)) -> None:
         _http_error(exc)
 
 
+def _to_preorder_read(db: Session, preorder) -> PreorderRead:
+    values = {
+        name: getattr(preorder, name)
+        for name in PreorderRead.model_fields
+        if name != "payment_summary"
+    }
+    values["payment_summary"] = services.payment_summary(db, preorder)
+    return PreorderRead.model_validate(values)
+
+
 @router.get("/preorders", response_model=list[PreorderRead])
 def list_preorders(
     customer_id: int | None = Query(default=None),
@@ -215,19 +228,22 @@ def list_preorders(
     enquiry_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[PreorderRead]:
-    return services.list_preorders(
-        db,
-        customer_id=customer_id,
-        product_id=product_id,
-        status=status,
-        enquiry_id=enquiry_id,
-    )
+    return [
+        _to_preorder_read(db, preorder)
+        for preorder in services.list_preorders(
+            db,
+            customer_id=customer_id,
+            product_id=product_id,
+            status=status,
+            enquiry_id=enquiry_id,
+        )
+    ]
 
 
 @router.post("/preorders", response_model=PreorderRead, status_code=status.HTTP_201_CREATED)
 def create_preorder(payload: PreorderCreate, db: Session = Depends(get_db)) -> PreorderRead:
     try:
-        return services.create_preorder(db, payload)
+        return _to_preorder_read(db, services.create_preorder(db, payload))
     except (services.NotFoundError, services.ConflictError) as exc:
         _http_error(exc)
 
@@ -235,7 +251,7 @@ def create_preorder(payload: PreorderCreate, db: Session = Depends(get_db)) -> P
 @router.get("/preorders/{preorder_id}", response_model=PreorderRead)
 def get_preorder(preorder_id: int, db: Session = Depends(get_db)) -> PreorderRead:
     try:
-        return services.get_preorder(db, preorder_id)
+        return _to_preorder_read(db, services.get_preorder(db, preorder_id))
     except services.NotFoundError as exc:
         _http_error(exc)
 
@@ -245,7 +261,7 @@ def update_preorder(
     preorder_id: int, payload: PreorderUpdate, db: Session = Depends(get_db)
 ) -> PreorderRead:
     try:
-        return services.update_preorder(db, preorder_id, payload)
+        return _to_preorder_read(db, services.update_preorder(db, preorder_id, payload))
     except (services.NotFoundError, services.ConflictError) as exc:
         _http_error(exc)
 
@@ -255,6 +271,55 @@ def transition_preorder(
     preorder_id: int, payload: PreorderTransition, db: Session = Depends(get_db)
 ) -> PreorderRead:
     try:
-        return services.transition_preorder(db, preorder_id, payload)
+        return _to_preorder_read(db, services.transition_preorder(db, preorder_id, payload))
     except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.get("/preorders/{preorder_id}/payments", response_model=list[PaymentRead])
+def list_payments(preorder_id: int, db: Session = Depends(get_db)) -> list[PaymentRead]:
+    try:
+        return services.list_payments(db, preorder_id)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.post(
+    "/preorders/{preorder_id}/payments",
+    response_model=PaymentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_payment(
+    preorder_id: int, payload: PaymentCreate, db: Session = Depends(get_db)
+) -> PaymentRead:
+    try:
+        return services.create_payment(db, preorder_id, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.get(
+    "/preorders/{preorder_id}/payments/{payment_id}", response_model=PaymentRead
+)
+def get_payment(
+    preorder_id: int, payment_id: int, db: Session = Depends(get_db)
+) -> PaymentRead:
+    try:
+        return services.get_payment(db, preorder_id, payment_id)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.patch(
+    "/preorders/{preorder_id}/payments/{payment_id}", response_model=PaymentRead
+)
+def update_payment(
+    preorder_id: int,
+    payment_id: int,
+    payload: PaymentUpdate,
+    db: Session = Depends(get_db),
+) -> PaymentRead:
+    try:
+        return services.update_payment(db, preorder_id, payment_id, payload)
+    except services.NotFoundError as exc:
         _http_error(exc)

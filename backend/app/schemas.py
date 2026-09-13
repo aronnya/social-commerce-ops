@@ -39,6 +39,11 @@ PreorderStatus = Literal[
 ]
 
 
+PaymentMethod = Literal["BANK_TRANSFER", "REVOLUT"]
+
+PaymentSummaryStatus = Literal["UNPAID", "PARTIALLY_PAID", "PAID", "OVERPAID"]
+
+
 class SupplierCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     contact_name: str | None = Field(default=None, max_length=200)
@@ -243,6 +248,13 @@ class PreorderTransition(BaseModel):
     status: PreorderStatus
 
 
+class PaymentSummary(BaseModel):
+    total_amount: Decimal | None
+    amount_paid: Decimal
+    outstanding_balance: Decimal | None
+    status: PaymentSummaryStatus | None
+
+
 class PreorderRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -253,6 +265,48 @@ class PreorderRead(BaseModel):
     quantity: int
     status: PreorderStatus
     agreed_price: Decimal | None
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
+    payment_summary: PaymentSummary
+
+
+class PaymentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(gt=0)
+    method: PaymentMethod
+    reference: str | None = Field(default=None, max_length=200)
+    paid_at: AwareDatetime | None = None
+    notes: str | None = None
+
+    @field_validator("reference", "notes", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class PaymentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reference: str | None = Field(default=None, max_length=200)
+    notes: str | None = None
+
+    @field_validator("reference", "notes", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class PaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    preorder_id: int
+    amount: Decimal
+    method: PaymentMethod
+    reference: str | None
+    paid_at: datetime
     notes: str | None
     created_at: datetime
     updated_at: datetime

@@ -127,12 +127,12 @@ This is a workflow operation, not “type a supplier order in a form from scratc
 
 ### Payment calculation
 
-Prefer derived payment state from payment records:
+Prefer derived payment state from payment records (never stored on Preorder or Payment):
 
-- total order amount (agreed selling price on the preorder)
+- total order amount = `preorder.quantity * preorder.agreed_price` (null if `agreed_price` is null)
 - amount paid (sum of payment rows)
-- outstanding balance
-- `UNPAID` / `PARTIALLY_PAID` / `PAID`
+- outstanding balance (`total - paid` when total is known)
+- `UNPAID` / `PARTIALLY_PAID` / `PAID`, plus `OVERPAID` when paid exceeds total
 
 Do not treat payment status as an unrelated dropdown. Refunds should later be first-class records that adjust the same calculations.
 
@@ -215,9 +215,9 @@ Happy path: `INQUIRY` → `CONFIRMED` → `ORDERED_FROM_SUPPLIER` → `ARRIVED` 
 
 Also allowed as exits (exact edges to be coded later): `CANCELLED`, `SUPPLIER_UNAVAILABLE`
 
-### Payment (derived from payment rows)
+### Payment (derived from payment rows; not a stored column)
 
-`UNPAID` | `PARTIALLY_PAID` | `PAID` (refunds later, from refund records)
+`UNPAID` | `PARTIALLY_PAID` | `PAID` | `OVERPAID` (exception when paid > quantity × agreed_price). Refunds later, from refund records.
 
 ### Supplier order
 
@@ -252,7 +252,7 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 
 - No authentication
 - No product photos
-- Preorders, payments, supplier orders, inventory, attention queue, events, and analytics are specified, not built
+- Supplier orders, inventory, attention queue, events, and analytics are specified, not built
 - Catalogue products are not inventory; there is no stock quantity yet
 - Frontend still only checks that the API health endpoint responds
 

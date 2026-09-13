@@ -1,12 +1,17 @@
-from sqlalchemy import select
+from decimal import Decimal
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Customer, Enquiry, Preorder, Product, Supplier
+from app.models import Customer, Enquiry, Payment, Preorder, Product, Supplier
 from app.schemas import (
     CustomerCreate,
     CustomerUpdate,
     EnquiryCreate,
     EnquiryUpdate,
+    PaymentCreate,
+    PaymentSummary,
+    PaymentUpdate,
     PreorderCreate,
     PreorderTransition,
     PreorderUpdate,
@@ -305,12 +310,19 @@ def create_preorder(db: Session, data: PreorderCreate) -> Preorder:
 def update_preorder(db: Session, preorder_id: int, data: PreorderUpdate) -> Preorder:
     preorder = get_preorder(db, preorder_id)
     updates = data.model_dump(exclude_unset=True)
-    if preorder.status != "CONFIRMED" and (
-        "quantity" in updates or "agreed_price" in updates
-    ):
+    changing_price_or_qty = "quantity" in updates or "agreed_price" in updates
+    if changing_price_or_qty and preorder.status != "CONFIRMED":
         raise ConflictError(
             "Quantity and agreed price can only be changed while the preorder is CONFIRMED."
         )
+    if changing_price_or_qty:
+        payment_id = db.scalar(
+            select(Payment.id).where(Payment.preorder_id == preorder.id).limit(1)
+        )
+        if payment_id is not None:
+            raise ConflictError(
+                "Quantity and agreed price cannot be changed after a payment has been recorded."
+            )
     for field, value in updates.items():
         setattr(preorder, field, value)
     db.commit()
@@ -331,3 +343,81 @@ def transition_preorder(
     db.commit()
     db.refresh(preorder)
     return preorder
+
+
+def _amount_paid(db: Session, preorder_id: int) -> Decimal:
+    paid = db.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.preorder_id == preorder_id
+        )
+    )
+    return Decimal(paid)
+
+
+def list_payments(db: Session, preorder_id: int) -> list[Payment]:
+    get_preorder(db, preorder_id)
+    statement = (
+        select(Payment)
+        .where(Payment.preorder_id == preorder_id)
+        .order_by(Payment.paid_at, Payment.id)
+    )
+    return list(db.scalars(statement).all())
+
+
+def get_payment(db: Session, preorder_id: int, payment_id: int) -> Payment:
+    get_preorder(db, preorder_id)
+    payment = db.get(Payment, payment_id)
+    if payment is None or payment.preorder_id != preorder_id:
+        raise NotFoundError(f"Payment {payment_id} was not found.")
+    return payment
+
+
+def create_payment(db: Session, preorder_id: int, data: PaymentCreate) -> Payment:
+    preorder = get_preorder(db, preorder_id)
+    if preorder.agreed_price is None:
+        raise ConflictError("Set agreed_price on the preorder before recording a payment.")
+    payload = data.model_dump(exclude_unset=True)
+    payment = Payment(preorder_id=preorder.id, **payload)
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    db.refresh(preorder)
+    return payment
+
+
+def update_payment(
+    db: Session, preorder_id: int, payment_id: int, data: PaymentUpdate
+) -> Payment:
+    payment = get_payment(db, preorder_id, payment_id)
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(payment, field, value)
+    db.commit()
+    db.refresh(payment)
+    return payment
+
+
+def payment_summary(db: Session, preorder: Preorder) -> PaymentSummary:
+    amount_paid = _amount_paid(db, preorder.id)
+    if preorder.agreed_price is None:
+        return PaymentSummary(
+            total_amount=None,
+            amount_paid=amount_paid,
+            outstanding_balance=None,
+            status=None,
+        )
+    total_amount = Decimal(preorder.quantity) * Decimal(preorder.agreed_price)
+    outstanding = total_amount - amount_paid
+    if amount_paid > total_amount:
+        status = "OVERPAID"
+    elif amount_paid == total_amount:
+        status = "PAID"
+    elif amount_paid == 0:
+        status = "UNPAID"
+    else:
+        status = "PARTIALLY_PAID"
+    return PaymentSummary(
+        total_amount=total_amount,
+        amount_paid=amount_paid,
+        outstanding_balance=outstanding,
+        status=status,
+    )

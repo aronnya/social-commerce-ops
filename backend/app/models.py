@@ -28,6 +28,12 @@ PREORDER_STATUSES = (
 )
 
 
+PAYMENT_METHODS = (
+    "BANK_TRANSFER",
+    "REVOLUT",
+)
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -159,3 +165,31 @@ class Preorder(Base):
     customer: Mapped[Customer] = relationship(back_populates="preorders")
     product: Mapped[Product] = relationship(back_populates="preorders")
     enquiry: Mapped[Enquiry | None] = relationship(back_populates="preorder")
+    payments: Mapped[list["Payment"]] = relationship(back_populates="preorder")
+
+
+class Payment(Base):
+    """Money received against a preorder. Status is derived, not stored."""
+
+    __tablename__ = "payments"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_payments_amount_positive"),
+        CheckConstraint(
+            "method IN (" + ", ".join(f"'{value}'" for value in PAYMENT_METHODS) + ")",
+            name="ck_payments_method",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    preorder_id: Mapped[int] = mapped_column(ForeignKey("preorders.id"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    method: Mapped[str] = mapped_column(String(32))
+    reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    preorder: Mapped[Preorder] = relationship(back_populates="payments")
