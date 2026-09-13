@@ -33,7 +33,7 @@ Reasons:
 
 We are **not** using microservices, Kubernetes, Kafka, Redis, GraphQL, or Docker. Those would add moving parts without solving a current problem.
 
-The API and UI run on the host machine so logs and breakpoints stay simple. PostgreSQL is the planned database. We will connect to a hosted instance (for example Supabase) in the database milestone, not in Milestone 1.
+The API and UI run on the host machine so logs and breakpoints stay simple. PostgreSQL is a hosted instance (for example Supabase), configured with `DATABASE_URL`. Do not put that URL in git.
 
 ## Folder structure
 
@@ -48,37 +48,36 @@ social-commerce-ops/
     app/
       main.py          # FastAPI application
       core/config.py   # settings from environment variables
+      core/db.py       # SQLAlchemy engine, session, Base
+      models.py        # Supplier, Product (catalogue), Customer
+      schemas.py       # Pydantic request/response shapes
+      services.py      # database operations and rules
+      api.py           # /api/v1 HTTP routes
+    alembic/           # database migrations
     tests/
     requirements.txt
+    alembic.ini
   frontend/            # Vite + React + TypeScript
 ```
 
-Later backend folders (not created until needed):
+Keep models/schemas/services in a few modules for now. Split into packages later if the files get hard to read.
 
-- `app/models/` — SQLAlchemy tables
-- `app/schemas/` — Pydantic request/response shapes
-- `app/api/` — HTTP routes (thin: validate input, call services, return results)
-- `app/services/` — business rules (state transitions, grouping into supplier orders, payment totals, reconciliation, inventory)
-- `alembic/` — database migrations
+Business rules belong in `services.py` (or equivalent domain functions), not only in React. The frontend should call operations such as “generate draft supplier order” or “record arrival”; it should not send arbitrary status strings the API blindly saves.
 
-Business rules belong in services (or equivalent domain functions), not only in React. The frontend should call operations such as “generate draft supplier order” or “record arrival”; it should not send arbitrary status strings the API blindly saves.
+## Important entities and relationships
 
-## Important entities and relationships (planned)
-
-These tables are **not implemented yet**. They are the intended relational model.
-
-| Entity | What it is |
-| --- | --- |
-| `suppliers` | People/businesses in Pakistan who provide dresses |
-| `products` | Catalogue items (photos, prices, type). **Not** stock. |
-| `customers` | People who enquire or buy |
-| `enquiries` | Interest in a product, including lost sales |
-| `preorders` | A customer commitment to buy a catalogue item |
-| `payments` | Individual transfers (bank / Revolut). Separate from preorder status. |
-| `supplier_orders` | A batch sent to a supplier |
-| `supplier_order_lines` | Consolidated rows on that batch, with links back to preorders and/or stock buys |
-| `inventory_lots` | Physical stock the business owns |
-| `workflow_events` | Later: audit trail of important workflow changes |
+| Entity | Status | What it is |
+| --- | --- | --- |
+| `suppliers` | Implemented | People/businesses in Pakistan who provide dresses |
+| `products` | Implemented | Catalogue items (photos later, prices, type). **Not** stock. |
+| `customers` | Implemented | People who enquire or buy |
+| `enquiries` | Planned | Interest in a product, including lost sales |
+| `preorders` | Planned | A customer commitment to buy a catalogue item |
+| `payments` | Planned | Individual transfers (bank / Revolut). Separate from preorder status. |
+| `supplier_orders` | Planned | A batch sent to a supplier |
+| `supplier_order_lines` | Planned | Consolidated rows on that batch, with links back to preorders and/or stock buys |
+| `inventory_lots` | Planned | Physical stock the business owns |
+| `workflow_events` | Later | Audit trail of important workflow changes |
 
 Relationships in plain English:
 
@@ -180,10 +179,10 @@ Resource endpoints will exist for the entities above. In addition, the API shoul
 
 | Area | Endpoints (planned) |
 | --- | --- |
-| Health | `GET /health` (already exists) |
-| Suppliers | `GET/POST /api/v1/suppliers`, `GET/PATCH /api/v1/suppliers/{id}` |
-| Products | `GET/POST /api/v1/products`, `GET/PATCH /api/v1/products/{id}` |
-| Customers | `GET/POST /api/v1/customers`, `GET/PATCH /api/v1/customers/{id}` |
+| Health | `GET /health` |
+| Suppliers | `GET/POST /api/v1/suppliers`, `GET/PATCH/DELETE /api/v1/suppliers/{id}` |
+| Products | `GET/POST /api/v1/products`, `GET/PATCH/DELETE /api/v1/products/{id}` (`?supplier_id=` filter) |
+| Customers | `GET/POST /api/v1/customers`, `GET/PATCH/DELETE /api/v1/customers/{id}` |
 | Enquiries | `GET/POST /api/v1/enquiries`, `PATCH` for outcome |
 | Preorders | `GET/POST /api/v1/preorders`, `POST /api/v1/preorders/{id}/transitions` |
 | Payments | `GET/POST /api/v1/preorders/{id}/payments` (status is derived, not PATCHed independently) |
@@ -245,18 +244,30 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 | Derived payment status | Totals cannot disagree with payment rows | Must recompute when payments change |
 | Operations in services | Rules stay testable and UI-independent | A bit more structure than “update the row” |
 | Derived attention queue | Cannot drift from real state | Queries must stay cheap and clear |
-| Hosted Postgres later (e.g. Supabase) | No local database install or Docker | Needs a connection string in `.env` when we start Milestone 2 |
+| Hosted Postgres (e.g. Supabase) | No local database install or Docker | Needs `DATABASE_URL` in `.env`; tests need a separate `TEST_DATABASE_URL` |
 | No Redis | No caching/queue requirement yet | Fine at this scale |
 | Minimal UI until Figma | Avoid throwing away a fake dashboard | Early screens will look plain on purpose |
 
 ## Known limitations (now)
 
-- No business tables or APIs yet
 - No authentication
 - No product photos
-- Database is not used by the API yet
-- Frontend only checks that the API health endpoint responds
-- Attention queue, grouping, reconciliation, events, and analytics are specified, not built
+- Enquiries, preorders, payments, supplier orders, inventory, attention queue, events, and analytics are specified, not built
+- Catalogue products are not inventory; there is no stock quantity yet
+- Frontend still only checks that the API health endpoint responds
+
+## Milestone 2 notes
+
+Implemented:
+
+- SQLAlchemy 2.0 engine/session (`app/core/db.py`)
+- Alembic migration `0001_catalogue_core` (suppliers, products, customers)
+- Integer primary keys (simple to explain; good enough at this scale)
+- `products.supplier_id` foreign key; cannot delete a supplier that still has products
+- Pydantic validation on write; service layer owns those rules
+- pytest for health always; CRUD tests when `TEST_DATABASE_URL` is set
+
+Not implemented: enquiries, preorders, payments, workflow operations.
 
 ## Future improvements (explicitly not MVP / not core dependencies)
 
@@ -272,13 +283,4 @@ The domain must work without external messaging APIs.
 
 ## Milestone 1 notes
 
-Implemented:
-
-- Split `frontend/` and `backend/`
-- FastAPI `GET /health`
-- Settings from environment (`.env` is gitignored)
-- Vite React + TypeScript app that calls `/health`
-- pytest for the health endpoint
-- PostgreSQL planned, but no database connection yet
-
-Not implemented: SQLAlchemy models, Alembic, CRUD APIs, or the operational services above.
+Implemented in the first commit: split frontend/backend, `/health`, env-based settings, Vite app, pytest for health. Database work moved to Milestone 2.

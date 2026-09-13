@@ -6,7 +6,7 @@ This is **not** a customer-facing shop. It is an operations tool for suppliers, 
 
 ## Status
 
-Milestone 1 is in place: repository layout, documentation, a FastAPI health endpoint, and a React + TypeScript frontend. Business features and the database connection are not implemented yet.
+Milestone 2 is in place: hosted PostgreSQL (SQLAlchemy + Alembic), plus supplier, catalogue product, and customer APIs. Workflow features (enquiries, preorders, payments, supplier orders) are not built yet.
 
 ## Repository layout
 
@@ -28,7 +28,9 @@ cd C:\Users\khana\Projects\social-commerce-ops
 copy .env.example .env
 ```
 
-The API does not connect to a database yet. Later we will use hosted PostgreSQL (for example Supabase). Do not put real credentials in git.
+Edit `.env` and set `DATABASE_URL` to a hosted PostgreSQL URL (for example Supabase). Use the SQLAlchemy driver prefix `postgresql+psycopg://` and include `sslmode=require` if the host asks for SSL. Never commit `.env`.
+
+For pytest, set `TEST_DATABASE_URL` to a **separate** database. Tests create and drop tables; do not point them at real business data.
 
 Backend:
 
@@ -37,6 +39,7 @@ cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -51,6 +54,9 @@ npm run dev
 - API: http://127.0.0.1:8000
 - API docs: http://127.0.0.1:8000/docs
 - Health check: http://127.0.0.1:8000/health
+- Suppliers: http://127.0.0.1:8000/api/v1/suppliers
+- Products (catalogue): http://127.0.0.1:8000/api/v1/products
+- Customers: http://127.0.0.1:8000/api/v1/customers
 - Frontend: http://localhost:5173
 
 ## Tests
@@ -60,6 +66,8 @@ cd backend
 .\.venv\Scripts\Activate.ps1
 pytest
 ```
+
+`GET /health` always runs. Supplier/product/customer tests skip unless `TEST_DATABASE_URL` is set.
 
 ## Security
 
