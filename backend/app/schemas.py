@@ -310,3 +310,83 @@ class PaymentRead(BaseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
+
+
+SupplierOrderStatus = Literal[
+    "DRAFT",
+    "PLACED",
+    "CONFIRMED",
+    "DISPATCHED",
+    "ARRIVED",
+    "RECONCILED",
+]
+
+SupplierOrderTransitionStatus = Literal[
+    "CONFIRMED",
+    "DISPATCHED",
+    "ARRIVED",
+    "RECONCILED",
+]
+
+
+class SupplierOrderAllocationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    preorder_id: int
+    quantity: int = Field(ge=1)
+
+
+class SupplierOrderLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_id: int
+    quantity: int = Field(ge=1)
+    unit_cost: Decimal | None = Field(default=None, ge=0)
+    notes: str | None
+    allocations: list[SupplierOrderAllocationRead]
+
+
+class SupplierOrderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    supplier_id: int
+    status: SupplierOrderStatus
+    notes: str | None
+    placed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    lines: list[SupplierOrderLineRead]
+
+
+class SupplierOrderUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    notes: str | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class SupplierOrderGenerateDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: int
+    preorder_ids: list[int] | None = Field(default=None, min_length=1)
+
+    @field_validator("preorder_ids")
+    @classmethod
+    def reject_duplicate_preorder_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("preorder_ids must not contain duplicates.")
+        return value
+
+
+class SupplierOrderTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SupplierOrderTransitionStatus

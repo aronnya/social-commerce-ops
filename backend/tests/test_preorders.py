@@ -237,8 +237,25 @@ def test_preorder_transitions(db_client: TestClient) -> None:
         json={"customer_id": customer_id, "product_id": product_id},
     )
     preorder_id = created.json()["id"]
+    blocked = db_client.post(
+        f"/api/v1/preorders/{preorder_id}/transitions",
+        json={"status": "ORDERED_FROM_SUPPLIER"},
+    )
+    assert blocked.status_code == 409
+
+    supplier_id = db_client.get(f"/api/v1/products/{product_id}").json()["supplier_id"]
+    draft = db_client.post(
+        "/api/v1/supplier-orders/generate-draft",
+        json={"supplier_id": supplier_id, "preorder_ids": [preorder_id]},
+    )
+    assert draft.status_code == 201
+    placed = db_client.post(f"/api/v1/supplier-orders/{draft.json()['id']}/place")
+    assert placed.status_code == 200
+    assert (
+        db_client.get(f"/api/v1/preorders/{preorder_id}").json()["status"]
+        == "ORDERED_FROM_SUPPLIER"
+    )
     for status in (
-        "ORDERED_FROM_SUPPLIER",
         "ARRIVED",
         "READY_FOR_CUSTOMER",
         "FULFILLED",

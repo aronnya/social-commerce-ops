@@ -32,6 +32,9 @@ def test_engine() -> Generator:
         yield engine
     finally:
         with engine.begin() as connection:
+            connection.execute(text("DROP TABLE IF EXISTS supplier_order_allocations CASCADE"))
+            connection.execute(text("DROP TABLE IF EXISTS supplier_order_lines CASCADE"))
+            connection.execute(text("DROP TABLE IF EXISTS supplier_orders CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS payments CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS preorders CASCADE"))
             connection.execute(text("DROP TABLE IF EXISTS enquiries CASCADE"))

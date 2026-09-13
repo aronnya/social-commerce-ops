@@ -22,9 +22,12 @@ from app.services import (
     create_supplier,
     delete_customer,
     delete_product,
+    generate_supplier_order_draft,
     get_enquiry,
     get_preorder,
+    get_product,
     list_preorders,
+    place_supplier_order,
     transition_preorder,
     update_preorder,
 )
@@ -246,8 +249,12 @@ def test_happy_path_transitions(db_session: Session) -> None:
         db_session,
         PreorderCreate(customer_id=customer_id, product_id=product_id),
     )
+    product = get_product(db_session, product_id)
+    draft = generate_supplier_order_draft(db_session, product.supplier_id, [preorder.id])
+    place_supplier_order(db_session, draft.id)
+    preorder = get_preorder(db_session, preorder.id)
+    assert preorder.status == "ORDERED_FROM_SUPPLIER"
     for status in (
-        "ORDERED_FROM_SUPPLIER",
         "ARRIVED",
         "READY_FOR_CUSTOMER",
         "FULFILLED",
@@ -298,9 +305,13 @@ def test_reverse_and_same_state_transitions(db_session: Session) -> None:
     )
     with pytest.raises(ConflictError):
         transition_preorder(db_session, preorder.id, PreorderTransition(status="CONFIRMED"))
-    preorder = transition_preorder(
-        db_session, preorder.id, PreorderTransition(status="ORDERED_FROM_SUPPLIER")
-    )
+    with pytest.raises(ConflictError):
+        transition_preorder(
+            db_session, preorder.id, PreorderTransition(status="ORDERED_FROM_SUPPLIER")
+        )
+    product = get_product(db_session, product_id)
+    draft = generate_supplier_order_draft(db_session, product.supplier_id, [preorder.id])
+    place_supplier_order(db_session, draft.id)
     with pytest.raises(ConflictError):
         transition_preorder(db_session, preorder.id, PreorderTransition(status="CONFIRMED"))
 

@@ -72,10 +72,10 @@ Business rules belong in `services.py` (or equivalent domain functions), not onl
 | `products` | Implemented | Catalogue items (photos later, prices, type). **Not** stock. |
 | `customers` | Implemented | People who enquire or buy |
 | `enquiries` | Implemented | Interest in a product, including lost sales |
-| `preorders` | Planned | A customer commitment to buy a catalogue item |
-| `payments` | Planned | Individual transfers (bank / Revolut). Separate from preorder status. |
-| `supplier_orders` | Planned | A batch sent to a supplier |
-| `supplier_order_lines` | Planned | Consolidated rows on that batch, with links back to preorders and/or stock buys |
+| `preorders` | Implemented | A customer commitment to buy a catalogue item |
+| `payments` | Implemented | Individual transfers (bank / Revolut). Separate from preorder status. |
+| `supplier_orders` | Implemented | A batch sent to a supplier (draft generation and placement; later recon not built) |
+| `supplier_order_lines` | Implemented | Consolidated rows on that batch, with links back to preorders |
 | `inventory_lots` | Planned | Physical stock the business owns |
 | `workflow_events` | Later | Audit trail of important workflow changes |
 
@@ -211,7 +211,7 @@ Exact paths can be chosen when those milestones are built. Do not add messaging 
 
 ### Preorder
 
-Happy path: `INQUIRY` → `CONFIRMED` → `ORDERED_FROM_SUPPLIER` → `ARRIVED` → `READY_FOR_CUSTOMER` → `FULFILLED`
+Happy path: `CONFIRMED` → `ORDERED_FROM_SUPPLIER` → `ARRIVED` → `READY_FOR_CUSTOMER` → `FULFILLED`
 
 Also allowed as exits (exact edges to be coded later): `CANCELLED`, `SUPPLIER_UNAVAILABLE`
 
@@ -252,7 +252,7 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 
 - No authentication
 - No product photos
-- Supplier orders, inventory, attention queue, events, and analytics are specified, not built
+- Inventory, attention queue, events, analytics, and supplier-order reconciliation are specified, not built
 - Catalogue products are not inventory; there is no stock quantity yet
 - Frontend still only checks that the API health endpoint responds
 

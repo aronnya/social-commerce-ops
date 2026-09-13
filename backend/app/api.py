@@ -25,6 +25,11 @@ from app.schemas import (
     ProductRead,
     ProductUpdate,
     SupplierCreate,
+    SupplierOrderGenerateDraft,
+    SupplierOrderRead,
+    SupplierOrderStatus,
+    SupplierOrderTransition,
+    SupplierOrderUpdate,
     SupplierRead,
     SupplierUpdate,
 )
@@ -322,4 +327,90 @@ def update_payment(
     try:
         return services.update_payment(db, preorder_id, payment_id, payload)
     except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.post(
+    "/supplier-orders/generate-draft",
+    response_model=SupplierOrderRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def generate_supplier_order_draft(
+    payload: SupplierOrderGenerateDraft, db: Session = Depends(get_db)
+) -> SupplierOrderRead:
+    try:
+        return services.generate_supplier_order_draft(
+            db, payload.supplier_id, payload.preorder_ids
+        )
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.get("/supplier-orders", response_model=list[SupplierOrderRead])
+def list_supplier_orders(
+    supplier_id: int | None = Query(default=None),
+    status: SupplierOrderStatus | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[SupplierOrderRead]:
+    return services.list_supplier_orders(db, supplier_id=supplier_id, status=status)
+
+
+@router.get("/supplier-orders/{supplier_order_id}", response_model=SupplierOrderRead)
+def get_supplier_order(
+    supplier_order_id: int, db: Session = Depends(get_db)
+) -> SupplierOrderRead:
+    try:
+        return services.get_supplier_order(db, supplier_order_id)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.patch("/supplier-orders/{supplier_order_id}", response_model=SupplierOrderRead)
+def update_supplier_order(
+    supplier_order_id: int,
+    payload: SupplierOrderUpdate,
+    db: Session = Depends(get_db),
+) -> SupplierOrderRead:
+    try:
+        return services.update_supplier_order(db, supplier_order_id, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.delete(
+    "/supplier-orders/{supplier_order_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_supplier_order(
+    supplier_order_id: int, db: Session = Depends(get_db)
+) -> None:
+    try:
+        services.delete_supplier_order_draft(db, supplier_order_id)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.post(
+    "/supplier-orders/{supplier_order_id}/place", response_model=SupplierOrderRead
+)
+def place_supplier_order(
+    supplier_order_id: int, db: Session = Depends(get_db)
+) -> SupplierOrderRead:
+    try:
+        return services.place_supplier_order(db, supplier_order_id)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.post(
+    "/supplier-orders/{supplier_order_id}/transitions",
+    response_model=SupplierOrderRead,
+)
+def transition_supplier_order(
+    supplier_order_id: int,
+    payload: SupplierOrderTransition,
+    db: Session = Depends(get_db),
+) -> SupplierOrderRead:
+    try:
+        return services.transition_supplier_order(db, supplier_order_id, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
         _http_error(exc)

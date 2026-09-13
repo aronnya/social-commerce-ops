@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -34,6 +34,16 @@ PAYMENT_METHODS = (
 )
 
 
+SUPPLIER_ORDER_STATUSES = (
+    "DRAFT",
+    "PLACED",
+    "CONFIRMED",
+    "DISPATCHED",
+    "ARRIVED",
+    "RECONCILED",
+)
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -54,6 +64,7 @@ class Supplier(Base):
     )
 
     products: Mapped[list["Product"]] = relationship(back_populates="supplier")
+    orders: Mapped[list["SupplierOrder"]] = relationship(back_populates="supplier")
 
 
 class Product(Base):
@@ -79,6 +90,9 @@ class Product(Base):
     supplier: Mapped[Supplier] = relationship(back_populates="products")
     enquiries: Mapped[list["Enquiry"]] = relationship(back_populates="product")
     preorders: Mapped[list["Preorder"]] = relationship(back_populates="product")
+    supplier_order_lines: Mapped[list["SupplierOrderLine"]] = relationship(
+        back_populates="product"
+    )
 
 
 class Customer(Base):
@@ -166,6 +180,9 @@ class Preorder(Base):
     product: Mapped[Product] = relationship(back_populates="preorders")
     enquiry: Mapped[Enquiry | None] = relationship(back_populates="preorder")
     payments: Mapped[list["Payment"]] = relationship(back_populates="preorder")
+    supplier_order_allocation: Mapped["SupplierOrderAllocation | None"] = relationship(
+        back_populates="preorder", uselist=False
+    )
 
 
 class Payment(Base):
@@ -193,3 +210,90 @@ class Payment(Base):
     )
 
     preorder: Mapped[Preorder] = relationship(back_populates="payments")
+
+
+class SupplierOrder(Base):
+    """A batch of demand sent to one supplier. Status is separate from Preorder."""
+
+    __tablename__ = "supplier_orders"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            + ", ".join(f"'{value}'" for value in SUPPLIER_ORDER_STATUSES)
+            + ")",
+            name="ck_supplier_orders_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="DRAFT", index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    placed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    supplier: Mapped[Supplier] = relationship(back_populates="orders")
+    lines: Mapped[list["SupplierOrderLine"]] = relationship(back_populates="supplier_order")
+
+
+class SupplierOrderLine(Base):
+    """Consolidated product row on a supplier order."""
+
+    __tablename__ = "supplier_order_lines"
+    __table_args__ = (
+        CheckConstraint("quantity >= 1", name="ck_supplier_order_lines_quantity_positive"),
+        CheckConstraint(
+            "unit_cost IS NULL OR unit_cost >= 0",
+            name="ck_supplier_order_lines_unit_cost_non_negative",
+        ),
+        UniqueConstraint(
+            "supplier_order_id",
+            "product_id",
+            name="uq_supplier_order_lines_order_product",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_order_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_orders.id"), index=True
+    )
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    supplier_order: Mapped[SupplierOrder] = relationship(back_populates="lines")
+    product: Mapped[Product] = relationship(back_populates="supplier_order_lines")
+    allocations: Mapped[list["SupplierOrderAllocation"]] = relationship(
+        back_populates="line"
+    )
+
+
+class SupplierOrderAllocation(Base):
+    """Links one preorder to the supplier-order line that covers it."""
+
+    __tablename__ = "supplier_order_allocations"
+    __table_args__ = (
+        CheckConstraint(
+            "quantity >= 1", name="ck_supplier_order_allocations_quantity_positive"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_order_line_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_order_lines.id"), index=True
+    )
+    preorder_id: Mapped[int] = mapped_column(
+        ForeignKey("preorders.id"), unique=True, index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer)
+
+    line: Mapped[SupplierOrderLine] = relationship(back_populates="allocations")
+    preorder: Mapped[Preorder] = relationship(back_populates="supplier_order_allocation")
