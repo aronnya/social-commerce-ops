@@ -59,3 +59,24 @@ def test_get_missing_customer_returns_404(db_client: TestClient) -> None:
 def test_reject_blank_customer_name(db_client: TestClient) -> None:
     response = db_client.post("/api/v1/customers", json={"name": ""})
     assert response.status_code == 422
+
+
+def test_cannot_delete_customer_with_enquiries(db_client: TestClient) -> None:
+    supplier = db_client.post("/api/v1/suppliers", json={"name": "Demo Delete Conflict Supplier"})
+    product = db_client.post(
+        "/api/v1/products",
+        json={"supplier_id": supplier.json()["id"], "name": "Demo Delete Conflict Dress"},
+    )
+    customer = db_client.post("/api/v1/customers", json={"name": "Demo Delete Conflict Customer"})
+    customer_id = customer.json()["id"]
+    product_id = product.json()["id"]
+    enquiry = db_client.post(
+        "/api/v1/enquiries",
+        json={"customer_id": customer_id, "product_id": product_id},
+    )
+    assert enquiry.status_code == 201
+
+    blocked = db_client.delete(f"/api/v1/customers/{customer_id}")
+    assert blocked.status_code == 409
+    still_there = db_client.get(f"/api/v1/customers/{customer_id}")
+    assert still_there.status_code == 200

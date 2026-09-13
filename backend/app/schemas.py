@@ -1,13 +1,31 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 
 def _strip_supplier_name(value: object) -> object:
     if isinstance(value, str):
         return value.strip()
     return value
+
+
+def _strip_optional_text(value: object) -> object:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return value
+
+
+EnquiryOutcome = Literal[
+    "PREORDERED",
+    "TOO_EXPENSIVE",
+    "SUPPLIER_UNAVAILABLE",
+    "CUSTOMER_GHOSTED",
+    "WRONG_SIZE",
+    "NOT_INTERESTED",
+]
 
 
 class SupplierCreate(BaseModel):
@@ -135,5 +153,47 @@ class CustomerRead(BaseModel):
     phone: str | None
     facebook_name: str | None
     notes: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EnquiryCreate(BaseModel):
+    customer_id: int
+    product_id: int
+    quantity: int = Field(default=1, ge=1)
+    outcome: EnquiryOutcome | None = None
+    notes: str | None = None
+    enquired_at: AwareDatetime | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class EnquiryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: int | None = Field(default=None, ge=1)
+    outcome: EnquiryOutcome | None = None
+    notes: str | None = None
+    enquired_at: AwareDatetime | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class EnquiryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    customer_id: int
+    product_id: int
+    quantity: int
+    outcome: EnquiryOutcome | None
+    notes: str | None
+    enquired_at: datetime
     created_at: datetime
     updated_at: datetime

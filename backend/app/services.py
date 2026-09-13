@@ -1,10 +1,12 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Customer, Product, Supplier
+from app.models import Customer, Enquiry, Product, Supplier
 from app.schemas import (
     CustomerCreate,
     CustomerUpdate,
+    EnquiryCreate,
+    EnquiryUpdate,
     ProductCreate,
     ProductUpdate,
     SupplierCreate,
@@ -98,6 +100,11 @@ def update_product(db: Session, product_id: int, data: ProductUpdate) -> Product
 
 def delete_product(db: Session, product_id: int) -> None:
     product = get_product(db, product_id)
+    enquiry_id = db.scalar(select(Enquiry.id).where(Enquiry.product_id == product_id).limit(1))
+    if enquiry_id is not None:
+        raise ConflictError(
+            "This product still has enquiries. Remove them first."
+        )
     db.delete(product)
     db.commit()
 
@@ -132,5 +139,63 @@ def update_customer(db: Session, customer_id: int, data: CustomerUpdate) -> Cust
 
 def delete_customer(db: Session, customer_id: int) -> None:
     customer = get_customer(db, customer_id)
+    enquiry_id = db.scalar(
+        select(Enquiry.id).where(Enquiry.customer_id == customer_id).limit(1)
+    )
+    if enquiry_id is not None:
+        raise ConflictError(
+            "This customer still has enquiries. Remove them first."
+        )
     db.delete(customer)
+    db.commit()
+
+
+def list_enquiries(
+    db: Session,
+    customer_id: int | None = None,
+    product_id: int | None = None,
+    outcome: str | None = None,
+    open_only: bool = False,
+) -> list[Enquiry]:
+    statement = select(Enquiry).order_by(Enquiry.id)
+    if customer_id is not None:
+        statement = statement.where(Enquiry.customer_id == customer_id)
+    if product_id is not None:
+        statement = statement.where(Enquiry.product_id == product_id)
+    if open_only:
+        statement = statement.where(Enquiry.outcome.is_(None))
+    elif outcome is not None:
+        statement = statement.where(Enquiry.outcome == outcome)
+    return list(db.scalars(statement).all())
+
+
+def get_enquiry(db: Session, enquiry_id: int) -> Enquiry:
+    enquiry = db.get(Enquiry, enquiry_id)
+    if enquiry is None:
+        raise NotFoundError(f"Enquiry {enquiry_id} was not found.")
+    return enquiry
+
+
+def create_enquiry(db: Session, data: EnquiryCreate) -> Enquiry:
+    get_customer(db, data.customer_id)
+    get_product(db, data.product_id)
+    enquiry = Enquiry(**data.model_dump(exclude_unset=True))
+    db.add(enquiry)
+    db.commit()
+    db.refresh(enquiry)
+    return enquiry
+
+
+def update_enquiry(db: Session, enquiry_id: int, data: EnquiryUpdate) -> Enquiry:
+    enquiry = get_enquiry(db, enquiry_id)
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(enquiry, field, value)
+    db.commit()
+    db.refresh(enquiry)
+    return enquiry
+
+
+def delete_enquiry(db: Session, enquiry_id: int) -> None:
+    enquiry = get_enquiry(db, enquiry_id)
+    db.delete(enquiry)
     db.commit()

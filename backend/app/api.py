@@ -9,6 +9,10 @@ from app.schemas import (
     CustomerCreate,
     CustomerRead,
     CustomerUpdate,
+    EnquiryCreate,
+    EnquiryOutcome,
+    EnquiryRead,
+    EnquiryUpdate,
     ProductCreate,
     ProductRead,
     ProductUpdate,
@@ -102,7 +106,7 @@ def update_product(
 def delete_product(product_id: int, db: Session = Depends(get_db)) -> None:
     try:
         services.delete_product(db, product_id)
-    except services.NotFoundError as exc:
+    except (services.NotFoundError, services.ConflictError) as exc:
         _http_error(exc)
 
 
@@ -138,5 +142,61 @@ def update_customer(
 def delete_customer(customer_id: int, db: Session = Depends(get_db)) -> None:
     try:
         services.delete_customer(db, customer_id)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.get("/enquiries", response_model=list[EnquiryRead])
+def list_enquiries(
+    customer_id: int | None = Query(default=None),
+    product_id: int | None = Query(default=None),
+    outcome: EnquiryOutcome | None = Query(default=None),
+    open_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> list[EnquiryRead]:
+    if open_only and outcome is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot combine outcome with open_only=true.",
+        )
+    return services.list_enquiries(
+        db,
+        customer_id=customer_id,
+        product_id=product_id,
+        outcome=outcome,
+        open_only=open_only,
+    )
+
+
+@router.post("/enquiries", response_model=EnquiryRead, status_code=status.HTTP_201_CREATED)
+def create_enquiry(payload: EnquiryCreate, db: Session = Depends(get_db)) -> EnquiryRead:
+    try:
+        return services.create_enquiry(db, payload)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.get("/enquiries/{enquiry_id}", response_model=EnquiryRead)
+def get_enquiry(enquiry_id: int, db: Session = Depends(get_db)) -> EnquiryRead:
+    try:
+        return services.get_enquiry(db, enquiry_id)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.patch("/enquiries/{enquiry_id}", response_model=EnquiryRead)
+def update_enquiry(
+    enquiry_id: int, payload: EnquiryUpdate, db: Session = Depends(get_db)
+) -> EnquiryRead:
+    try:
+        return services.update_enquiry(db, enquiry_id, payload)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.delete("/enquiries/{enquiry_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_enquiry(enquiry_id: int, db: Session = Depends(get_db)) -> None:
+    try:
+        services.delete_enquiry(db, enquiry_id)
     except services.NotFoundError as exc:
         _http_error(exc)

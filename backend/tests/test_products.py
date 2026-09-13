@@ -98,3 +98,23 @@ def test_create_list_filter_and_update_product(db_client: TestClient) -> None:
 def test_get_missing_product_returns_404(db_client: TestClient) -> None:
     response = db_client.get("/api/v1/products/999999")
     assert response.status_code == 404
+
+
+def test_cannot_delete_product_with_enquiries(db_client: TestClient) -> None:
+    supplier = db_client.post("/api/v1/suppliers", json={"name": "Demo Product Delete Supplier"})
+    product = db_client.post(
+        "/api/v1/products",
+        json={"supplier_id": supplier.json()["id"], "name": "Demo Product Delete Dress"},
+    )
+    customer = db_client.post("/api/v1/customers", json={"name": "Demo Product Delete Customer"})
+    product_id = product.json()["id"]
+    enquiry = db_client.post(
+        "/api/v1/enquiries",
+        json={"customer_id": customer.json()["id"], "product_id": product_id},
+    )
+    assert enquiry.status_code == 201
+
+    blocked = db_client.delete(f"/api/v1/products/{product_id}")
+    assert blocked.status_code == 409
+    still_there = db_client.get(f"/api/v1/products/{product_id}")
+    assert still_there.status_code == 200
