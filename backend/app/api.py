@@ -13,6 +13,11 @@ from app.schemas import (
     EnquiryOutcome,
     EnquiryRead,
     EnquiryUpdate,
+    PreorderCreate,
+    PreorderRead,
+    PreorderStatus,
+    PreorderTransition,
+    PreorderUpdate,
     ProductCreate,
     ProductRead,
     ProductUpdate,
@@ -199,4 +204,57 @@ def delete_enquiry(enquiry_id: int, db: Session = Depends(get_db)) -> None:
     try:
         services.delete_enquiry(db, enquiry_id)
     except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.get("/preorders", response_model=list[PreorderRead])
+def list_preorders(
+    customer_id: int | None = Query(default=None),
+    product_id: int | None = Query(default=None),
+    status: PreorderStatus | None = Query(default=None),
+    enquiry_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[PreorderRead]:
+    return services.list_preorders(
+        db,
+        customer_id=customer_id,
+        product_id=product_id,
+        status=status,
+        enquiry_id=enquiry_id,
+    )
+
+
+@router.post("/preorders", response_model=PreorderRead, status_code=status.HTTP_201_CREATED)
+def create_preorder(payload: PreorderCreate, db: Session = Depends(get_db)) -> PreorderRead:
+    try:
+        return services.create_preorder(db, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.get("/preorders/{preorder_id}", response_model=PreorderRead)
+def get_preorder(preorder_id: int, db: Session = Depends(get_db)) -> PreorderRead:
+    try:
+        return services.get_preorder(db, preorder_id)
+    except services.NotFoundError as exc:
+        _http_error(exc)
+
+
+@router.patch("/preorders/{preorder_id}", response_model=PreorderRead)
+def update_preorder(
+    preorder_id: int, payload: PreorderUpdate, db: Session = Depends(get_db)
+) -> PreorderRead:
+    try:
+        return services.update_preorder(db, preorder_id, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.post("/preorders/{preorder_id}/transitions", response_model=PreorderRead)
+def transition_preorder(
+    preorder_id: int, payload: PreorderTransition, db: Session = Depends(get_db)
+) -> PreorderRead:
+    try:
+        return services.transition_preorder(db, preorder_id, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
         _http_error(exc)

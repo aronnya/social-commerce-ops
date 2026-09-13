@@ -1,12 +1,15 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Customer, Enquiry, Product, Supplier
+from app.models import Customer, Enquiry, Preorder, Product, Supplier
 from app.schemas import (
     CustomerCreate,
     CustomerUpdate,
     EnquiryCreate,
     EnquiryUpdate,
+    PreorderCreate,
+    PreorderTransition,
+    PreorderUpdate,
     ProductCreate,
     ProductUpdate,
     SupplierCreate,
@@ -20,6 +23,18 @@ class NotFoundError(Exception):
 
 class ConflictError(Exception):
     pass
+
+
+# Isolated allow-list so SupplierOrder can later own ORDERED_FROM_SUPPLIER.
+PREORDER_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
+    "CONFIRMED": frozenset({"ORDERED_FROM_SUPPLIER", "CANCELLED", "SUPPLIER_UNAVAILABLE"}),
+    "ORDERED_FROM_SUPPLIER": frozenset({"ARRIVED", "CANCELLED", "SUPPLIER_UNAVAILABLE"}),
+    "ARRIVED": frozenset({"READY_FOR_CUSTOMER", "SUPPLIER_UNAVAILABLE"}),
+    "READY_FOR_CUSTOMER": frozenset({"FULFILLED", "CANCELLED"}),
+    "FULFILLED": frozenset(),
+    "CANCELLED": frozenset(),
+    "SUPPLIER_UNAVAILABLE": frozenset(),
+}
 
 
 def list_suppliers(db: Session) -> list[Supplier]:
@@ -105,6 +120,11 @@ def delete_product(db: Session, product_id: int) -> None:
         raise ConflictError(
             "This product still has enquiries. Remove them first."
         )
+    preorder_id = db.scalar(select(Preorder.id).where(Preorder.product_id == product_id).limit(1))
+    if preorder_id is not None:
+        raise ConflictError(
+            "This product still has preorders. Cancel them first."
+        )
     db.delete(product)
     db.commit()
 
@@ -145,6 +165,13 @@ def delete_customer(db: Session, customer_id: int) -> None:
     if enquiry_id is not None:
         raise ConflictError(
             "This customer still has enquiries. Remove them first."
+        )
+    preorder_id = db.scalar(
+        select(Preorder.id).where(Preorder.customer_id == customer_id).limit(1)
+    )
+    if preorder_id is not None:
+        raise ConflictError(
+            "This customer still has preorders. Cancel them first."
         )
     db.delete(customer)
     db.commit()
@@ -199,3 +226,108 @@ def delete_enquiry(db: Session, enquiry_id: int) -> None:
     enquiry = get_enquiry(db, enquiry_id)
     db.delete(enquiry)
     db.commit()
+
+
+def list_preorders(
+    db: Session,
+    customer_id: int | None = None,
+    product_id: int | None = None,
+    status: str | None = None,
+    enquiry_id: int | None = None,
+) -> list[Preorder]:
+    statement = select(Preorder).order_by(Preorder.id)
+    if customer_id is not None:
+        statement = statement.where(Preorder.customer_id == customer_id)
+    if product_id is not None:
+        statement = statement.where(Preorder.product_id == product_id)
+    if status is not None:
+        statement = statement.where(Preorder.status == status)
+    if enquiry_id is not None:
+        statement = statement.where(Preorder.enquiry_id == enquiry_id)
+    return list(db.scalars(statement).all())
+
+
+def get_preorder(db: Session, preorder_id: int) -> Preorder:
+    preorder = db.get(Preorder, preorder_id)
+    if preorder is None:
+        raise NotFoundError(f"Preorder {preorder_id} was not found.")
+    return preorder
+
+
+def create_preorder(db: Session, data: PreorderCreate) -> Preorder:
+    get_customer(db, data.customer_id)
+    product = get_product(db, data.product_id)
+
+    enquiry = None
+    if data.enquiry_id is not None:
+        enquiry = get_enquiry(db, data.enquiry_id)
+        if enquiry.customer_id != data.customer_id or enquiry.product_id != data.product_id:
+            raise ConflictError(
+                "The enquiry must be for the same customer and product as the preorder."
+            )
+        existing = db.scalar(
+            select(Preorder.id).where(Preorder.enquiry_id == enquiry.id).limit(1)
+        )
+        if existing is not None:
+            raise ConflictError("This enquiry already has a preorder.")
+
+    fields_set = data.model_fields_set
+    payload = data.model_dump(exclude_unset=True)
+    if "quantity" in fields_set:
+        quantity = payload["quantity"]
+    elif enquiry is not None:
+        quantity = enquiry.quantity
+    else:
+        quantity = 1
+
+    if "agreed_price" in fields_set:
+        agreed_price = payload["agreed_price"]
+    else:
+        agreed_price = product.selling_price
+
+    preorder = Preorder(
+        customer_id=data.customer_id,
+        product_id=data.product_id,
+        enquiry_id=data.enquiry_id,
+        quantity=quantity,
+        status="CONFIRMED",
+        agreed_price=agreed_price,
+        notes=payload.get("notes", data.notes),
+    )
+    db.add(preorder)
+    if enquiry is not None:
+        enquiry.outcome = "PREORDERED"
+    db.commit()
+    db.refresh(preorder)
+    return preorder
+
+
+def update_preorder(db: Session, preorder_id: int, data: PreorderUpdate) -> Preorder:
+    preorder = get_preorder(db, preorder_id)
+    updates = data.model_dump(exclude_unset=True)
+    if preorder.status != "CONFIRMED" and (
+        "quantity" in updates or "agreed_price" in updates
+    ):
+        raise ConflictError(
+            "Quantity and agreed price can only be changed while the preorder is CONFIRMED."
+        )
+    for field, value in updates.items():
+        setattr(preorder, field, value)
+    db.commit()
+    db.refresh(preorder)
+    return preorder
+
+
+def transition_preorder(
+    db: Session, preorder_id: int, data: PreorderTransition
+) -> Preorder:
+    preorder = get_preorder(db, preorder_id)
+    allowed = PREORDER_ALLOWED_TRANSITIONS.get(preorder.status, frozenset())
+    if data.status == preorder.status or data.status not in allowed:
+        raise ConflictError(
+            f"Cannot transition preorder from {preorder.status} to {data.status}."
+        )
+    preorder.status = data.status
+    db.commit()
+    db.refresh(preorder)
+    return preorder

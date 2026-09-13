@@ -28,6 +28,17 @@ EnquiryOutcome = Literal[
 ]
 
 
+PreorderStatus = Literal[
+    "CONFIRMED",
+    "ORDERED_FROM_SUPPLIER",
+    "ARRIVED",
+    "READY_FOR_CUSTOMER",
+    "FULFILLED",
+    "CANCELLED",
+    "SUPPLIER_UNAVAILABLE",
+]
+
+
 class SupplierCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     contact_name: str | None = Field(default=None, max_length=200)
@@ -195,5 +206,53 @@ class EnquiryRead(BaseModel):
     outcome: EnquiryOutcome | None
     notes: str | None
     enquired_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class PreorderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: int
+    product_id: int
+    enquiry_id: int | None = None
+    quantity: int = Field(default=1, ge=1)
+    agreed_price: Decimal | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class PreorderUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quantity: int | None = Field(default=None, ge=1)
+    agreed_price: Decimal | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+
+class PreorderTransition(BaseModel):
+    status: PreorderStatus
+
+
+class PreorderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    customer_id: int
+    product_id: int
+    enquiry_id: int | None
+    quantity: int
+    status: PreorderStatus
+    agreed_price: Decimal | None
+    notes: str | None
     created_at: datetime
     updated_at: datetime

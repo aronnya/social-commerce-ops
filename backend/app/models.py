@@ -17,6 +17,17 @@ ENQUIRY_OUTCOMES = (
 )
 
 
+PREORDER_STATUSES = (
+    "CONFIRMED",
+    "ORDERED_FROM_SUPPLIER",
+    "ARRIVED",
+    "READY_FOR_CUSTOMER",
+    "FULFILLED",
+    "CANCELLED",
+    "SUPPLIER_UNAVAILABLE",
+)
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -61,6 +72,7 @@ class Product(Base):
 
     supplier: Mapped[Supplier] = relationship(back_populates="products")
     enquiries: Mapped[list["Enquiry"]] = relationship(back_populates="product")
+    preorders: Mapped[list["Preorder"]] = relationship(back_populates="product")
 
 
 class Customer(Base):
@@ -77,6 +89,7 @@ class Customer(Base):
     )
 
     enquiries: Mapped[list["Enquiry"]] = relationship(back_populates="customer")
+    preorders: Mapped[list["Preorder"]] = relationship(back_populates="customer")
 
 
 class Enquiry(Base):
@@ -107,3 +120,42 @@ class Enquiry(Base):
 
     customer: Mapped[Customer] = relationship(back_populates="enquiries")
     product: Mapped[Product] = relationship(back_populates="enquiries")
+    preorder: Mapped["Preorder | None"] = relationship(
+        back_populates="enquiry", uselist=False
+    )
+
+
+class Preorder(Base):
+    """Customer commitment to buy a catalogue product. This is not an enquiry."""
+
+    __tablename__ = "preorders"
+    __table_args__ = (
+        CheckConstraint("quantity >= 1", name="ck_preorders_quantity_positive"),
+        CheckConstraint(
+            "agreed_price IS NULL OR agreed_price >= 0",
+            name="ck_preorders_agreed_price_non_negative",
+        ),
+        CheckConstraint(
+            "status IN (" + ", ".join(f"'{value}'" for value in PREORDER_STATUSES) + ")",
+            name="ck_preorders_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    enquiry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enquiries.id"), nullable=True, unique=True, index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(32), default="CONFIRMED", index=True)
+    agreed_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    customer: Mapped[Customer] = relationship(back_populates="preorders")
+    product: Mapped[Product] = relationship(back_populates="preorders")
+    enquiry: Mapped[Enquiry | None] = relationship(back_populates="preorder")

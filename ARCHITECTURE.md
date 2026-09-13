@@ -71,7 +71,7 @@ Business rules belong in `services.py` (or equivalent domain functions), not onl
 | `suppliers` | Implemented | People/businesses in Pakistan who provide dresses |
 | `products` | Implemented | Catalogue items (photos later, prices, type). **Not** stock. |
 | `customers` | Implemented | People who enquire or buy |
-| `enquiries` | Planned | Interest in a product, including lost sales |
+| `enquiries` | Implemented | Interest in a product, including lost sales |
 | `preorders` | Planned | A customer commitment to buy a catalogue item |
 | `payments` | Planned | Individual transfers (bank / Revolut). Separate from preorder status. |
 | `supplier_orders` | Planned | A batch sent to a supplier |
@@ -252,7 +252,7 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 
 - No authentication
 - No product photos
-- Enquiries, preorders, payments, supplier orders, inventory, attention queue, events, and analytics are specified, not built
+- Preorders, payments, supplier orders, inventory, attention queue, events, and analytics are specified, not built
 - Catalogue products are not inventory; there is no stock quantity yet
 - Frontend still only checks that the API health endpoint responds
 
@@ -267,7 +267,7 @@ Implemented:
 - Pydantic validation on write; service layer owns those rules
 - pytest for health always; CRUD tests when `TEST_DATABASE_URL` is set
 
-Not implemented: enquiries, preorders, payments, workflow operations.
+Not implemented: preorders, payments, workflow operations.
 
 ## Future improvements (explicitly not MVP / not core dependencies)
 
