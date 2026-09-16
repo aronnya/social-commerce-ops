@@ -18,6 +18,9 @@ from app.models import (
     utc_now,
 )
 from app.schemas import (
+    AttentionCounts,
+    AttentionItem,
+    AttentionQueue,
     CustomerCreate,
     CustomerUpdate,
     EnquiryCreate,
@@ -910,3 +913,153 @@ def get_inventory_lot(db: Session, inventory_lot_id: int) -> InventoryLot:
     if lot is None:
         raise NotFoundError(f"Inventory lot {inventory_lot_id} was not found.")
     return lot
+
+
+ATTENTION_TYPE_RANK = {
+    "preorder_overpaid": 10,
+    "supplier_order_needs_reconciliation": 20,
+    "preorder_needs_customer_ready": 30,
+    "preorder_needs_fulfilment": 40,
+    "supplier_order_draft_needs_placement": 50,
+    "preorder_needs_supplier_order": 60,
+}
+
+
+def _empty_attention_counts() -> dict[str, int]:
+    return {key: 0 for key in ATTENTION_TYPE_RANK}
+
+
+def list_attention(db: Session) -> AttentionQueue:
+    items: list[AttentionItem] = []
+
+    confirmed = (
+        select(Preorder, Product.supplier_id)
+        .join(Product, Preorder.product_id == Product.id)
+        .outerjoin(
+            SupplierOrderAllocation,
+            SupplierOrderAllocation.preorder_id == Preorder.id,
+        )
+        .where(Preorder.status == "CONFIRMED")
+        .where(SupplierOrderAllocation.id.is_(None))
+    )
+    for preorder, supplier_id in db.execute(confirmed):
+        items.append(
+            AttentionItem(
+                type="preorder_needs_supplier_order",
+                entity_type="preorder",
+                entity_id=preorder.id,
+                occurred_at=preorder.created_at,
+                customer_id=preorder.customer_id,
+                product_id=preorder.product_id,
+                supplier_id=supplier_id,
+            )
+        )
+
+    in_hand = (
+        select(Preorder, Product.supplier_id)
+        .join(Product, Preorder.product_id == Product.id)
+        .where(Preorder.status.in_(("ARRIVED", "READY_FOR_CUSTOMER")))
+    )
+    for preorder, supplier_id in db.execute(in_hand):
+        item_type = (
+            "preorder_needs_customer_ready"
+            if preorder.status == "ARRIVED"
+            else "preorder_needs_fulfilment"
+        )
+        items.append(
+            AttentionItem(
+                type=item_type,
+                entity_type="preorder",
+                entity_id=preorder.id,
+                occurred_at=preorder.updated_at,
+                customer_id=preorder.customer_id,
+                product_id=preorder.product_id,
+                supplier_id=supplier_id,
+            )
+        )
+
+    supplier_orders = select(SupplierOrder).where(
+        SupplierOrder.status.in_(("DRAFT", "ARRIVED"))
+    )
+    for order in db.scalars(supplier_orders):
+        if order.status == "DRAFT":
+            items.append(
+                AttentionItem(
+                    type="supplier_order_draft_needs_placement",
+                    entity_type="supplier_order",
+                    entity_id=order.id,
+                    occurred_at=order.created_at,
+                    supplier_id=order.supplier_id,
+                )
+            )
+        else:
+            items.append(
+                AttentionItem(
+                    type="supplier_order_needs_reconciliation",
+                    entity_type="supplier_order",
+                    entity_id=order.id,
+                    occurred_at=order.updated_at,
+                    supplier_id=order.supplier_id,
+                )
+            )
+
+    overpaid = (
+        select(
+            Preorder.id,
+            Preorder.customer_id,
+            Preorder.product_id,
+            Product.supplier_id,
+            Preorder.quantity,
+            Preorder.agreed_price,
+            func.sum(Payment.amount),
+            func.max(Payment.paid_at),
+        )
+        .join(Payment, Payment.preorder_id == Preorder.id)
+        .join(Product, Preorder.product_id == Product.id)
+        .where(Preorder.agreed_price.is_not(None))
+        .group_by(
+            Preorder.id,
+            Preorder.customer_id,
+            Preorder.product_id,
+            Product.supplier_id,
+            Preorder.quantity,
+            Preorder.agreed_price,
+        )
+        .having(func.sum(Payment.amount) > Preorder.quantity * Preorder.agreed_price)
+    )
+    for (
+        preorder_id,
+        customer_id,
+        product_id,
+        supplier_id,
+        quantity,
+        agreed_price,
+        amount_paid,
+        paid_at,
+    ) in db.execute(overpaid):
+        total = Decimal(quantity) * Decimal(agreed_price)
+        items.append(
+            AttentionItem(
+                type="preorder_overpaid",
+                entity_type="preorder",
+                entity_id=preorder_id,
+                occurred_at=paid_at,
+                customer_id=customer_id,
+                product_id=product_id,
+                supplier_id=supplier_id,
+                outstanding_balance=total - Decimal(amount_paid),
+            )
+        )
+
+    items.sort(
+        key=lambda item: (
+            ATTENTION_TYPE_RANK[item.type],
+            item.occurred_at,
+            item.entity_type,
+            item.entity_id,
+        )
+    )
+    counts = _empty_attention_counts()
+    for item in items:
+        counts[item.type] += 1
+    return AttentionQueue(items=items, counts=AttentionCounts(**counts))

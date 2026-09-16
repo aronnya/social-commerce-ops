@@ -104,15 +104,20 @@ These behaviours are the point of the architecture. They will be added milestone
 
 ### Action / attention queue
 
-The API should eventually expose a derived queue (SQL over current state), not a separately maintained to-do table that can drift. Examples:
+`GET /api/v1/attention` is a **derived** queue from current tables. There is no `AttentionTask` table and no way to dismiss an item except by completing the underlying operation. The endpoint is read-only.
 
-- confirmed preorders not yet on a supplier order
-- supplier orders waiting for the next valid action
-- items in `ARRIVED` / `READY_FOR_CUSTOMER` waiting for collection or delivery
-- preorders with an outstanding balance
-- orders that may be delayed (once we have enough timestamps/events)
+v1 types, in display order:
 
-The home screen’s job is: “What needs my attention today?”
+1. `preorder_overpaid` — `sum(payments) > quantity × agreed_price`. May persist until refunds exist; payment amounts cannot be reduced.
+2. `supplier_order_needs_reconciliation` — supplier order `ARRIVED`
+3. `preorder_needs_customer_ready` — preorder `ARRIVED`
+4. `preorder_needs_fulfilment` — preorder `READY_FOR_CUSTOMER`
+5. `supplier_order_draft_needs_placement` — supplier order `DRAFT`
+6. `preorder_needs_supplier_order` — `CONFIRMED` with no supplier-order allocation
+
+Within a type: `occurred_at` ASC, then `entity_type`, then `entity_id`. Not a scored urgency.
+
+Deferred: in-flight supplier orders (`PLACED`/`CONFIRMED`/`DISPATCHED`), blanket unpaid/partial payments, open enquiries, SLA/due dates, shortage still allocated after recon.
 
 ### Supplier order generation
 
@@ -252,7 +257,8 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 
 - No authentication
 - No product photos
-- Attention queue, events, analytics, multiple receipts, stock-buy lines, allocation release, inventory consumption, returns/refunds/damage are specified, not built
+- Events, analytics, multiple receipts, stock-buy lines, allocation release, inventory consumption, returns/refunds/damage are specified, not built
+- Attention queue is derived (no table); `GET /api/v1/attention` is read-only. `OVERPAID` items can stick until refunds exist.
 - Catalogue products are not inventory; unassigned owned stock lives on `InventoryLot`, not on `Product`
 - Frontend still only checks that the API health endpoint responds
 

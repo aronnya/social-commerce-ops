@@ -34,6 +34,7 @@ from app.schemas import (
     SupplierRead,
     SupplierUpdate,
     InventoryLotRead,
+    AttentionQueue,
 )
 
 router = APIRouter()
@@ -449,3 +450,8 @@ def get_inventory_lot(
         return services.get_inventory_lot(db, inventory_lot_id)
     except services.NotFoundError as exc:
         _http_error(exc)
+
+
+@router.get("/attention", response_model=AttentionQueue)
+def get_attention(db: Session = Depends(get_db)) -> AttentionQueue:
+    return services.list_attention(db)

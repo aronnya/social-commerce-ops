@@ -442,3 +442,46 @@ class InventoryLotRead(BaseModel):
     supplier_order_line_id: int | None
     created_at: datetime
     updated_at: datetime
+
+
+AttentionType = Literal[
+    "preorder_overpaid",
+    "supplier_order_needs_reconciliation",
+    "preorder_needs_customer_ready",
+    "preorder_needs_fulfilment",
+    "supplier_order_draft_needs_placement",
+    "preorder_needs_supplier_order",
+]
+
+AttentionEntityType = Literal["preorder", "supplier_order"]
+
+
+class AttentionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: AttentionType
+    entity_type: AttentionEntityType
+    entity_id: int
+    occurred_at: datetime
+    customer_id: int | None = None
+    product_id: int | None = None
+    supplier_id: int | None = None
+    outstanding_balance: Decimal | None = None
+
+
+class AttentionCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preorder_overpaid: int = 0
+    supplier_order_needs_reconciliation: int = 0
+    preorder_needs_customer_ready: int = 0
+    preorder_needs_fulfilment: int = 0
+    supplier_order_draft_needs_placement: int = 0
+    preorder_needs_supplier_order: int = 0
+
+
+class AttentionQueue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AttentionItem]
+    counts: AttentionCounts
