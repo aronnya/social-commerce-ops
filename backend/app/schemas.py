@@ -485,3 +485,98 @@ class AttentionQueue(BaseModel):
 
     items: list[AttentionItem]
     counts: AttentionCounts
+
+
+LostDemandReason = Literal[
+    "TOO_EXPENSIVE",
+    "SUPPLIER_UNAVAILABLE",
+    "CUSTOMER_GHOSTED",
+    "WRONG_SIZE",
+    "NOT_INTERESTED",
+]
+
+
+LOST_DEMAND_REASONS: tuple[LostDemandReason, ...] = (
+    "TOO_EXPENSIVE",
+    "SUPPLIER_UNAVAILABLE",
+    "CUSTOMER_GHOSTED",
+    "WRONG_SIZE",
+    "NOT_INTERESTED",
+)
+
+
+class DemandOverview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total_enquiries: int = 0
+    open_enquiries: int = 0
+    resolved_enquiries: int = 0
+    converted_enquiries: int = 0
+    lost_enquiries: int = 0
+    requested_quantity: int = 0
+    conversion_rate: Decimal | None = None
+    unlinked_preordered_outcomes: int = 0
+    linked_preorder_outcome_mismatch: int = 0
+
+
+class LostDemandBucket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: LostDemandReason
+    count: int = 0
+
+
+class ProductDemandRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: int
+    name: str
+    style: str | None
+    colour: str | None
+    size: str | None
+    supplier_id: int
+    supplier_name: str
+    enquiry_count: int
+    distinct_customers: int
+    requested_quantity: int
+    converted_enquiries: int
+    lost_enquiries: int
+    open_enquiries: int
+    conversion_rate: Decimal | None = None
+
+
+class SupplierDemandRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: int
+    name: str
+    enquiry_count: int
+    distinct_customers: int
+    requested_quantity: int
+    converted_enquiries: int
+    lost_enquiries: int
+    open_enquiries: int
+    conversion_rate: Decimal | None = None
+
+
+class FulfilmentSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date_basis: Literal["all_time"] = "all_time"
+    reconciled_order_count: int = 0
+    ordered_quantity: int = 0
+    received_quantity: int = 0
+    shortage_units: int = 0
+    excess_units: int = 0
+
+
+class DemandAnalytics(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_: datetime | None = Field(default=None, alias="from")
+    to: datetime | None = None
+    overview: DemandOverview
+    lost_demand: list[LostDemandBucket]
+    products: list[ProductDemandRow]
+    suppliers: list[SupplierDemandRow]
+    fulfilment: FulfilmentSnapshot

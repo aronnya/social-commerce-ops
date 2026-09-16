@@ -174,7 +174,11 @@ A `workflow_events` (or similarly named) history can be added when those operati
 
 ### Demand intelligence
 
-Keep analysing **enquiries** as well as completed sales. SQL aggregations should later cover conversion, lost-sale reasons, high-interest/low-conversion products, demand by style/colour/size/price/supplier/time, supplier performance, and candidates for local inventory. No machine learning in the MVP.
+`list_demand_analytics` is a **derived** read model (no analytics tables). Conversion is an actual `Preorder.enquiry_id` link, never `Enquiry.outcome == PREORDERED`. Open enquiries are excluded from the conversion denominator (`resolved = converted + lost`; rate is `null` when resolved is 0). Lost demand is the five coded enquiry outcomes only, in a fixed order, including zero buckets.
+
+Product and supplier rows are raw aggregates (enquiry count, requested quantity, distinct customers, converted/lost/open, rate) for entities with at least one enquiry in the window. Supplier demand is catalogue attribution via `Product.supplier_id`, not shipment quality. Optional `[from, to)` filters `Enquiry.enquired_at` only. Reconciliation snapshot is all-time `RECONCILED` orders (ordered vs received, shortage/excess) with `date_basis = "all_time"`.
+
+No revenue/cash/margin, no timing/SLA metrics, no scoring, no high-interest flag, no ML. `GET /api/v1/analytics/demand` is read-only. Optional `from`/`to` query params are timezone-aware and filter `Enquiry.enquired_at` as `[from, to)`.
 
 ## Planned REST API
 
@@ -194,7 +198,7 @@ Resource endpoints will exist for the entities above. In addition, the API shoul
 | Supplier orders | generate draft from confirmed preorders; lines; transitions; reconcile received quantities |
 | Inventory | list, receive, allocate (with availability checks) |
 | Attention | `GET /api/v1/attention` (or similar) — derived queue |
-| Analytics | `GET /api/v1/analytics/...` — enquiries, conversions, loss reasons, suppliers, prices |
+| Analytics | `GET /api/v1/analytics/demand` — derived enquiry conversion, lost demand, product/supplier demand, all-time recon snapshot |
 | Events | later: list history for an entity |
 
 Preorder status is **not** a free-form `PATCH`. A dedicated transition endpoint will check an allow-list of next states. The same idea applies to supplier-order status.
@@ -257,7 +261,8 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 
 - No authentication
 - No product photos
-- Events, analytics, multiple receipts, stock-buy lines, allocation release, inventory consumption, returns/refunds/damage are specified, not built
+- Events, multiple receipts, stock-buy lines, allocation release, inventory consumption, returns/refunds/damage are specified, not built
+- Demand analytics is derived and read-only (`GET /api/v1/analytics/demand`). Enquiry `PREORDERED` can still be set without a preorder; conversion uses the preorder link and exposes mismatch counts. No `enquired_at` index yet.
 - Attention queue is derived (no table); `GET /api/v1/attention` is read-only. `OVERPAID` items can stick until refunds exist.
 - Catalogue products are not inventory; unassigned owned stock lives on `InventoryLot`, not on `Product`
 - Frontend still only checks that the API health endpoint responds

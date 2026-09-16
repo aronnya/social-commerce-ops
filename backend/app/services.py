@@ -1,6 +1,7 @@
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -23,8 +24,13 @@ from app.schemas import (
     AttentionQueue,
     CustomerCreate,
     CustomerUpdate,
+    DemandAnalytics,
+    DemandOverview,
     EnquiryCreate,
     EnquiryUpdate,
+    FulfilmentSnapshot,
+    LOST_DEMAND_REASONS,
+    LostDemandBucket,
     PaymentCreate,
     PaymentSummary,
     PaymentUpdate,
@@ -32,8 +38,10 @@ from app.schemas import (
     PreorderTransition,
     PreorderUpdate,
     ProductCreate,
+    ProductDemandRow,
     ProductUpdate,
     SupplierCreate,
+    SupplierDemandRow,
     SupplierOrderReconcile,
     SupplierOrderTransition,
     SupplierOrderUpdate,
@@ -1063,3 +1071,235 @@ def list_attention(db: Session) -> AttentionQueue:
     for item in items:
         counts[item.type] += 1
     return AttentionQueue(items=items, counts=AttentionCounts(**counts))
+
+
+def _as_int(value: object) -> int:
+    if value is None:
+        return 0
+    return int(value)
+
+
+def _conversion_rate(converted: int, lost: int) -> Decimal | None:
+    resolved = converted + lost
+    if resolved == 0:
+        return None
+    return Decimal(converted) / Decimal(resolved)
+
+
+def _demand_enquiry_filters(from_: datetime | None, to: datetime | None):
+    if from_ is not None and to is not None and from_ >= to:
+        raise ValueError("from must be earlier than to.")
+    filters = []
+    if from_ is not None:
+        filters.append(Enquiry.enquired_at >= from_)
+    if to is not None:
+        filters.append(Enquiry.enquired_at < to)
+    return filters
+
+
+def _demand_enquiry_select(*columns, filters: list):
+    statement = (
+        select(*columns)
+        .select_from(Enquiry)
+        .join(Product, Product.id == Enquiry.product_id)
+        .join(Supplier, Supplier.id == Product.supplier_id)
+        .outerjoin(Preorder, Preorder.enquiry_id == Enquiry.id)
+    )
+    if filters:
+        statement = statement.where(*filters)
+    return statement
+
+
+def _is_converted():
+    return Preorder.id.is_not(None)
+
+
+def _is_lost():
+    return and_(Preorder.id.is_(None), Enquiry.outcome.in_(LOST_DEMAND_REASONS))
+
+
+def _is_open():
+    return and_(Preorder.id.is_(None), Enquiry.outcome.is_(None))
+
+
+def _is_unlinked_preordered():
+    return and_(Preorder.id.is_(None), Enquiry.outcome == "PREORDERED")
+
+
+def _is_outcome_mismatch():
+    return and_(Preorder.id.is_not(None), Enquiry.outcome.is_distinct_from("PREORDERED"))
+
+
+def _lost_reason(reason: str):
+    return and_(Preorder.id.is_(None), Enquiry.outcome == reason)
+
+
+def _count_if(condition):
+    return func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
+
+
+def list_demand_analytics(
+    db: Session,
+    from_: datetime | None = None,
+    to: datetime | None = None,
+) -> DemandAnalytics:
+    window = _demand_enquiry_filters(from_, to)
+    lost_reason_columns = [
+        _count_if(_lost_reason(reason)).label(reason) for reason in LOST_DEMAND_REASONS
+    ]
+    overview_row = db.execute(
+        _demand_enquiry_select(
+            func.count(Enquiry.id).label("total_enquiries"),
+            _count_if(_is_open()).label("open_enquiries"),
+            _count_if(_is_converted()).label("converted_enquiries"),
+            _count_if(_is_lost()).label("lost_enquiries"),
+            func.coalesce(func.sum(Enquiry.quantity), 0).label("requested_quantity"),
+            _count_if(_is_unlinked_preordered()).label("unlinked_preordered_outcomes"),
+            _count_if(_is_outcome_mismatch()).label("linked_preorder_outcome_mismatch"),
+            *lost_reason_columns,
+            filters=window,
+        )
+    ).one()
+
+    converted = _as_int(overview_row.converted_enquiries)
+    lost = _as_int(overview_row.lost_enquiries)
+    overview = DemandOverview(
+        total_enquiries=_as_int(overview_row.total_enquiries),
+        open_enquiries=_as_int(overview_row.open_enquiries),
+        resolved_enquiries=converted + lost,
+        converted_enquiries=converted,
+        lost_enquiries=lost,
+        requested_quantity=_as_int(overview_row.requested_quantity),
+        conversion_rate=_conversion_rate(converted, lost),
+        unlinked_preordered_outcomes=_as_int(overview_row.unlinked_preordered_outcomes),
+        linked_preorder_outcome_mismatch=_as_int(
+            overview_row.linked_preorder_outcome_mismatch
+        ),
+    )
+    lost_demand = [
+        LostDemandBucket(reason=reason, count=_as_int(getattr(overview_row, reason)))
+        for reason in LOST_DEMAND_REASONS
+    ]
+
+    product_rows = db.execute(
+        _demand_enquiry_select(
+            Product.id.label("product_id"),
+            Product.name,
+            Product.style,
+            Product.colour,
+            Product.size,
+            Product.supplier_id,
+            Supplier.name.label("supplier_name"),
+            func.count(Enquiry.id).label("enquiry_count"),
+            func.count(func.distinct(Enquiry.customer_id)).label("distinct_customers"),
+            func.coalesce(func.sum(Enquiry.quantity), 0).label("requested_quantity"),
+            _count_if(_is_converted()).label("converted_enquiries"),
+            _count_if(_is_lost()).label("lost_enquiries"),
+            _count_if(_is_open()).label("open_enquiries"),
+            filters=window,
+        )
+        .group_by(
+            Product.id,
+            Product.name,
+            Product.style,
+            Product.colour,
+            Product.size,
+            Product.supplier_id,
+            Supplier.name,
+        )
+        .order_by(
+            func.count(Enquiry.id).desc(),
+            func.coalesce(func.sum(Enquiry.quantity), 0).desc(),
+            Product.id.asc(),
+        )
+    ).all()
+    products = [
+        ProductDemandRow(
+            product_id=row.product_id,
+            name=row.name,
+            style=row.style,
+            colour=row.colour,
+            size=row.size,
+            supplier_id=row.supplier_id,
+            supplier_name=row.supplier_name,
+            enquiry_count=_as_int(row.enquiry_count),
+            distinct_customers=_as_int(row.distinct_customers),
+            requested_quantity=_as_int(row.requested_quantity),
+            converted_enquiries=_as_int(row.converted_enquiries),
+            lost_enquiries=_as_int(row.lost_enquiries),
+            open_enquiries=_as_int(row.open_enquiries),
+            conversion_rate=_conversion_rate(
+                _as_int(row.converted_enquiries), _as_int(row.lost_enquiries)
+            ),
+        )
+        for row in product_rows
+    ]
+
+    supplier_rows = db.execute(
+        _demand_enquiry_select(
+            Supplier.id.label("supplier_id"),
+            Supplier.name,
+            func.count(Enquiry.id).label("enquiry_count"),
+            func.count(func.distinct(Enquiry.customer_id)).label("distinct_customers"),
+            func.coalesce(func.sum(Enquiry.quantity), 0).label("requested_quantity"),
+            _count_if(_is_converted()).label("converted_enquiries"),
+            _count_if(_is_lost()).label("lost_enquiries"),
+            _count_if(_is_open()).label("open_enquiries"),
+            filters=window,
+        )
+        .group_by(Supplier.id, Supplier.name)
+        .order_by(func.count(Enquiry.id).desc(), Supplier.id.asc())
+    ).all()
+    suppliers = [
+        SupplierDemandRow(
+            supplier_id=row.supplier_id,
+            name=row.name,
+            enquiry_count=_as_int(row.enquiry_count),
+            distinct_customers=_as_int(row.distinct_customers),
+            requested_quantity=_as_int(row.requested_quantity),
+            converted_enquiries=_as_int(row.converted_enquiries),
+            lost_enquiries=_as_int(row.lost_enquiries),
+            open_enquiries=_as_int(row.open_enquiries),
+            conversion_rate=_conversion_rate(
+                _as_int(row.converted_enquiries), _as_int(row.lost_enquiries)
+            ),
+        )
+        for row in supplier_rows
+    ]
+
+    ordered = SupplierOrderLine.quantity
+    received = func.coalesce(SupplierOrderLine.received_quantity, 0)
+    fulfilment_row = db.execute(
+        select(
+            func.count(func.distinct(SupplierOrder.id)).label("reconciled_order_count"),
+            func.coalesce(func.sum(ordered), 0).label("ordered_quantity"),
+            func.coalesce(func.sum(received), 0).label("received_quantity"),
+            func.coalesce(func.sum(func.greatest(0, ordered - received)), 0).label(
+                "shortage_units"
+            ),
+            func.coalesce(func.sum(func.greatest(0, received - ordered)), 0).label(
+                "excess_units"
+            ),
+        )
+        .select_from(SupplierOrder)
+        .join(SupplierOrderLine, SupplierOrderLine.supplier_order_id == SupplierOrder.id)
+        .where(SupplierOrder.status == "RECONCILED")
+    ).one()
+    fulfilment = FulfilmentSnapshot(
+        date_basis="all_time",
+        reconciled_order_count=_as_int(fulfilment_row.reconciled_order_count),
+        ordered_quantity=_as_int(fulfilment_row.ordered_quantity),
+        received_quantity=_as_int(fulfilment_row.received_quantity),
+        shortage_units=_as_int(fulfilment_row.shortage_units),
+        excess_units=_as_int(fulfilment_row.excess_units),
+    )
+
+    return DemandAnalytics(
+        from_=from_,
+        to=to,
+        overview=overview,
+        lost_demand=lost_demand,
+        products=products,
+        suppliers=suppliers,
+        fulfilment=fulfilment,
+    )

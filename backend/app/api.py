@@ -1,6 +1,7 @@
 from typing import NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import AwareDatetime
 from sqlalchemy.orm import Session
 
 from app import services
@@ -35,6 +36,7 @@ from app.schemas import (
     SupplierUpdate,
     InventoryLotRead,
     AttentionQueue,
+    DemandAnalytics,
 )
 
 router = APIRouter()
@@ -455,3 +457,23 @@ def get_inventory_lot(
 @router.get("/attention", response_model=AttentionQueue)
 def get_attention(db: Session = Depends(get_db)) -> AttentionQueue:
     return services.list_attention(db)
+
+
+@router.get("/analytics/demand", response_model=DemandAnalytics)
+def get_demand_analytics(
+    from_: AwareDatetime | None = Query(default=None, alias="from"),
+    to: AwareDatetime | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> DemandAnalytics:
+    if from_ is not None and to is not None and from_ >= to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="from must be earlier than to.",
+        )
+    try:
+        return services.list_demand_analytics(db, from_=from_, to=to)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
