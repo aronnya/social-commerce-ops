@@ -82,7 +82,11 @@ def test_supplier_order_transition_accepts_allowed_targets() -> None:
     assert SupplierOrderTransition(status="CONFIRMED").status == "CONFIRMED"
     assert SupplierOrderTransition(status="DISPATCHED").status == "DISPATCHED"
     assert SupplierOrderTransition(status="ARRIVED").status == "ARRIVED"
-    assert SupplierOrderTransition(status="RECONCILED").status == "RECONCILED"
+
+
+def test_supplier_order_transition_rejects_reconciled() -> None:
+    with pytest.raises(ValidationError):
+        SupplierOrderTransition(status="RECONCILED")
 
 
 def test_supplier_order_transition_rejects_draft() -> None:
@@ -131,6 +135,9 @@ def test_supplier_order_read_nested_shape() -> None:
     )
     assert read.status == "DRAFT"
     assert read.lines[0].quantity == 3
+    assert read.lines[0].received_quantity is None
+    assert read.reconciled_at is None
+    assert read.reconciliation_notes is None
     assert len(read.lines[0].allocations) == 2
 
 

@@ -74,9 +74,9 @@ Business rules belong in `services.py` (or equivalent domain functions), not onl
 | `enquiries` | Implemented | Interest in a product, including lost sales |
 | `preorders` | Implemented | A customer commitment to buy a catalogue item |
 | `payments` | Implemented | Individual transfers (bank / Revolut). Separate from preorder status. |
-| `supplier_orders` | Implemented | A batch sent to a supplier (draft generation and placement; later recon not built) |
-| `supplier_order_lines` | Implemented | Consolidated rows on that batch, with links back to preorders |
-| `inventory_lots` | Planned | Physical stock the business owns |
+| `supplier_orders` | Implemented | A batch sent to a supplier. `RECONCILED` is set only by `POST /supplier-orders/{id}/reconcile`. |
+| `supplier_order_lines` | Implemented | Consolidated rows: ordered `quantity` is immutable; `received_quantity` is a separate fact |
+| `inventory_lots` | Implemented | Physically owned/unassigned stock. Created by reconciliation remainder; API is read-only in v1. |
 | `workflow_events` | Later | Audit trail of important workflow changes |
 
 Relationships in plain English:
@@ -88,8 +88,8 @@ Relationships in plain English:
 - A preorder is for one customer and one product. It may come from an enquiry (optional, because walk-in sales exist).
 - A preorder may be attached to one **active** supplier order once it is grouped for buying. It must not be included in multiple active supplier orders.
 - Payments belong to a preorder. Several payments can add up to the agreed price. Payment status is calculated from those rows.
-- A supplier order has many lines. A line consolidates quantity for a product/variant, still pointing at the customer preorders (and optional inventory buys) it covers. Lines should be able to record ordered vs received quantity at reconciliation.
-- An inventory lot points at a product and records quantity actually on hand. Receiving a stock purchase increases it. Allocating or selling physical stock decreases it, and must not go below available quantity.
+- A supplier order has many lines. A line consolidates quantity for a product/variant, still pointing at the customer preorders. Ordered quantity and received quantity are separate facts; discrepancy is derived (`received - ordered`). Customer-bound preorder units do not enter inventory lots.
+- An inventory lot points at a product and records quantity actually on hand that the business owns and has not assigned to a customer preorder. Direct stock purchases, later receipts, and consumption are deferred.
 - Workflow events (when added) point at the relevant entity and record what happened and when.
 
 Why enquiry and preorder are separate: analytics must count “people asked about this dress” even when they never ordered. If we only stored preorders, we would throw away lost-demand data.
@@ -221,7 +221,7 @@ Also allowed as exits (exact edges to be coded later): `CANCELLED`, `SUPPLIER_UN
 
 ### Supplier order
 
-`DRAFT` → `PLACED` → `CONFIRMED` → `DISPATCHED` → `ARRIVED` → `RECONCILED`
+`DRAFT` → `PLACED` → `CONFIRMED` → `DISPATCHED` → `ARRIVED`, then `POST .../reconcile` → `RECONCILED`. Generic transitions cannot set `PLACED` or `RECONCILED`. Ordered line `quantity` is never overwritten; clients may derive `received_quantity - quantity`. Unassigned received units become `InventoryLot` rows. `GET /api/v1/inventory` is read-only.
 
 ## Auth (later, not Milestone 1)
 
@@ -252,8 +252,8 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 
 - No authentication
 - No product photos
-- Inventory, attention queue, events, analytics, and supplier-order reconciliation are specified, not built
-- Catalogue products are not inventory; there is no stock quantity yet
+- Attention queue, events, analytics, multiple receipts, stock-buy lines, allocation release, inventory consumption, returns/refunds/damage are specified, not built
+- Catalogue products are not inventory; unassigned owned stock lives on `InventoryLot`, not on `Product`
 - Frontend still only checks that the API health endpoint responds
 
 ## Milestone 2 notes

@@ -237,19 +237,11 @@ def test_supplier_order_status_transitions(db_session: Session) -> None:
         db_session, dispatched.id, SupplierOrderTransition(status="ARRIVED")
     )
     assert arrived.status == "ARRIVED"
-    reconciled = transition_supplier_order(
-        db_session, arrived.id, SupplierOrderTransition(status="RECONCILED")
-    )
-    assert reconciled.status == "RECONCILED"
+    with pytest.raises(ConflictError):
+        transition_supplier_order(
+            db_session, arrived.id, SupplierOrderTransition(status="ARRIVED")
+        )
     assert get_preorder(db_session, preorder.id).status == "ORDERED_FROM_SUPPLIER"
-    with pytest.raises(ConflictError):
-        transition_supplier_order(
-            db_session, reconciled.id, SupplierOrderTransition(status="ARRIVED")
-        )
-    with pytest.raises(ConflictError):
-        transition_supplier_order(
-            db_session, reconciled.id, SupplierOrderTransition(status="RECONCILED")
-        )
 
 
 def test_delete_draft_releases_preorder(db_session: Session) -> None:

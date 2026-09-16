@@ -255,17 +255,11 @@ def test_preorder_transitions(db_client: TestClient) -> None:
         db_client.get(f"/api/v1/preorders/{preorder_id}").json()["status"]
         == "ORDERED_FROM_SUPPLIER"
     )
-    for status in (
-        "ARRIVED",
-        "READY_FOR_CUSTOMER",
-        "FULFILLED",
-    ):
-        response = db_client.post(
-            f"/api/v1/preorders/{preorder_id}/transitions",
-            json={"status": status},
-        )
-        assert response.status_code == 200
-        assert response.json()["status"] == status
+    arrived = db_client.post(
+        f"/api/v1/preorders/{preorder_id}/transitions",
+        json={"status": "ARRIVED"},
+    )
+    assert arrived.status_code == 409
 
     cancelled = db_client.post(
         "/api/v1/preorders",

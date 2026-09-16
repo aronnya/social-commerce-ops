@@ -27,11 +27,13 @@ from app.schemas import (
     SupplierCreate,
     SupplierOrderGenerateDraft,
     SupplierOrderRead,
+    SupplierOrderReconcile,
     SupplierOrderStatus,
     SupplierOrderTransition,
     SupplierOrderUpdate,
     SupplierRead,
     SupplierUpdate,
+    InventoryLotRead,
 )
 
 router = APIRouter()
@@ -413,4 +415,37 @@ def transition_supplier_order(
     try:
         return services.transition_supplier_order(db, supplier_order_id, payload)
     except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.post(
+    "/supplier-orders/{supplier_order_id}/reconcile",
+    response_model=SupplierOrderRead,
+)
+def reconcile_supplier_order(
+    supplier_order_id: int,
+    payload: SupplierOrderReconcile,
+    db: Session = Depends(get_db),
+) -> SupplierOrderRead:
+    try:
+        return services.reconcile_supplier_order(db, supplier_order_id, payload)
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.get("/inventory", response_model=list[InventoryLotRead])
+def list_inventory_lots(
+    product_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[InventoryLotRead]:
+    return services.list_inventory_lots(db, product_id=product_id)
+
+
+@router.get("/inventory/{inventory_lot_id}", response_model=InventoryLotRead)
+def get_inventory_lot(
+    inventory_lot_id: int, db: Session = Depends(get_db)
+) -> InventoryLotRead:
+    try:
+        return services.get_inventory_lot(db, inventory_lot_id)
+    except services.NotFoundError as exc:
         _http_error(exc)

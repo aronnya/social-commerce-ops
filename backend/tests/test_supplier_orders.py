@@ -320,7 +320,7 @@ def test_supplier_order_transitions(db_client: TestClient) -> None:
         f"/api/v1/supplier-orders/{order_id}/transitions",
         json={"status": "RECONCILED"},
     )
-    assert reconciled.json()["status"] == "RECONCILED"
+    assert reconciled.status_code == 422
     assert (
         db_client.get(f"/api/v1/preorders/{preorder['id']}").json()["status"]
         == "ORDERED_FROM_SUPPLIER"

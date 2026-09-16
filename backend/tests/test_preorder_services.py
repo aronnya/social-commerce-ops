@@ -10,7 +10,10 @@ from app.schemas import (
     PreorderTransition,
     PreorderUpdate,
     ProductCreate,
+    ReconciliationLineInput,
     SupplierCreate,
+    SupplierOrderReconcile,
+    SupplierOrderTransition,
 )
 from app.services import (
     ConflictError,
@@ -28,7 +31,9 @@ from app.services import (
     get_product,
     list_preorders,
     place_supplier_order,
+    reconcile_supplier_order,
     transition_preorder,
+    transition_supplier_order,
     update_preorder,
 )
 
@@ -254,8 +259,26 @@ def test_happy_path_transitions(db_session: Session) -> None:
     place_supplier_order(db_session, draft.id)
     preorder = get_preorder(db_session, preorder.id)
     assert preorder.status == "ORDERED_FROM_SUPPLIER"
+    with pytest.raises(ConflictError):
+        transition_preorder(db_session, preorder.id, PreorderTransition(status="ARRIVED"))
+    for status in ("CONFIRMED", "DISPATCHED", "ARRIVED"):
+        draft = transition_supplier_order(
+            db_session, draft.id, SupplierOrderTransition(status=status)
+        )
+    reconcile_supplier_order(
+        db_session,
+        draft.id,
+        SupplierOrderReconcile(
+            lines=[
+                ReconciliationLineInput(
+                    line_id=draft.lines[0].id, received_quantity=preorder.quantity
+                )
+            ]
+        ),
+    )
+    preorder = get_preorder(db_session, preorder.id)
+    assert preorder.status == "ARRIVED"
     for status in (
-        "ARRIVED",
         "READY_FOR_CUSTOMER",
         "FULFILLED",
     ):

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import (
     Customer,
     Enquiry,
+    InventoryLot,
     Payment,
     Preorder,
     Product,
@@ -30,6 +31,7 @@ from app.schemas import (
     ProductCreate,
     ProductUpdate,
     SupplierCreate,
+    SupplierOrderReconcile,
     SupplierOrderTransition,
     SupplierOrderUpdate,
     SupplierUpdate,
@@ -44,10 +46,11 @@ class ConflictError(Exception):
     pass
 
 
-# ORDERED_FROM_SUPPLIER is set only by place_supplier_order, not public transitions.
+# ORDERED_FROM_SUPPLIER is set only by place_supplier_order.
+# ARRIVED for allocated preorders is set only by reconcile_supplier_order.
 PREORDER_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "CONFIRMED": frozenset({"CANCELLED", "SUPPLIER_UNAVAILABLE"}),
-    "ORDERED_FROM_SUPPLIER": frozenset({"ARRIVED", "CANCELLED", "SUPPLIER_UNAVAILABLE"}),
+    "ORDERED_FROM_SUPPLIER": frozenset({"CANCELLED", "SUPPLIER_UNAVAILABLE"}),
     "ARRIVED": frozenset({"READY_FOR_CUSTOMER", "SUPPLIER_UNAVAILABLE"}),
     "READY_FOR_CUSTOMER": frozenset({"FULFILLED", "CANCELLED"}),
     "FULFILLED": frozenset(),
@@ -55,13 +58,13 @@ PREORDER_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "SUPPLIER_UNAVAILABLE": frozenset(),
 }
 
-# Full machine. DRAFT -> PLACED is owned by place_supplier_order, not the generic transition.
+# Full machine. PLACED and RECONCILED are owned by dedicated operations.
 SUPPLIER_ORDER_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "DRAFT": frozenset({"PLACED"}),
     "PLACED": frozenset({"CONFIRMED"}),
     "CONFIRMED": frozenset({"DISPATCHED"}),
     "DISPATCHED": frozenset({"ARRIVED"}),
-    "ARRIVED": frozenset({"RECONCILED"}),
+    "ARRIVED": frozenset(),
     "RECONCILED": frozenset(),
 }
 
@@ -170,6 +173,13 @@ def delete_product(db: Session, product_id: int) -> None:
     if preorder_id is not None:
         raise ConflictError(
             "This product still has preorders. Cancel them first."
+        )
+    lot_id = db.scalar(
+        select(InventoryLot.id).where(InventoryLot.product_id == product_id).limit(1)
+    )
+    if lot_id is not None:
+        raise ConflictError(
+            "This product still has inventory lots. Remove them first."
         )
     db.delete(product)
     db.commit()
@@ -550,6 +560,17 @@ def _raise_if_allocation_integrity_error(exc: IntegrityError) -> None:
         ) from exc
 
 
+def _raise_if_inventory_lot_integrity_error(exc: IntegrityError) -> None:
+    message = str(getattr(exc, "orig", exc)).lower()
+    if (
+        "inventory_lots" in message
+        or "ix_inventory_lots_supplier_order_line_id" in message
+    ):
+        raise ConflictError(
+            "Inventory has already been recorded for this supplier order line."
+        ) from exc
+
+
 def list_supplier_orders(
     db: Session,
     supplier_id: int | None = None,
@@ -711,9 +732,9 @@ def transition_supplier_order(
     db: Session, supplier_order_id: int, data: SupplierOrderTransition
 ) -> SupplierOrder:
     order = get_supplier_order(db, supplier_order_id)
-    if data.status == "PLACED" or order.status == "DRAFT":
+    if data.status == "PLACED" or data.status == "RECONCILED" or order.status == "DRAFT":
         raise ConflictError(
-            "Placing a supplier order must use place_supplier_order."
+            "Placing or reconciling a supplier order must use the dedicated operation."
         )
     allowed = SUPPLIER_ORDER_ALLOWED_TRANSITIONS.get(order.status, frozenset())
     if data.status == order.status or data.status not in allowed:
@@ -723,3 +744,169 @@ def transition_supplier_order(
     order.status = data.status
     db.commit()
     return _get_supplier_order_loaded(db, order.id)
+
+
+def _lock_supplier_order(db: Session, supplier_order_id: int) -> SupplierOrder:
+    statement = (
+        select(SupplierOrder)
+        .where(SupplierOrder.id == supplier_order_id)
+        .with_for_update()
+    )
+    order = db.scalars(statement).one_or_none()
+    if order is None:
+        raise NotFoundError(f"Supplier order {supplier_order_id} was not found.")
+    return order
+
+
+def _fifo_complete_preorders(preorders: list[Preorder], received_quantity: int) -> list[Preorder]:
+    remaining = received_quantity
+    selected: list[Preorder] = []
+    for preorder in preorders:
+        if remaining >= preorder.quantity:
+            selected.append(preorder)
+            remaining -= preorder.quantity
+        else:
+            break
+    return selected
+
+
+def reconcile_supplier_order(
+    db: Session, supplier_order_id: int, data: SupplierOrderReconcile
+) -> SupplierOrder:
+    order = _lock_supplier_order(db, supplier_order_id)
+    if order.status != "ARRIVED" or order.reconciled_at is not None:
+        raise ConflictError("Only an unreconciled ARRIVED supplier order can be reconciled.")
+
+    lines = list(
+        db.scalars(
+            select(SupplierOrderLine)
+            .where(SupplierOrderLine.supplier_order_id == order.id)
+            .order_by(SupplierOrderLine.id)
+            .with_for_update()
+        ).all()
+    )
+    if not lines:
+        raise ConflictError("A supplier order must have lines before reconciling.")
+    lines_by_id = {line.id: line for line in lines}
+    request_ids = [item.line_id for item in data.lines]
+    if set(request_ids) != set(lines_by_id):
+        missing = set(lines_by_id) - set(request_ids)
+        extra = set(request_ids) - set(lines_by_id)
+        if extra:
+            extra_id = next(iter(extra))
+            other = db.get(SupplierOrderLine, extra_id)
+            if other is None:
+                raise NotFoundError(f"Supplier order line {extra_id} was not found.")
+            raise ConflictError(
+                f"Supplier order line {extra_id} does not belong to this supplier order."
+            )
+        raise ConflictError(
+            "Reconciliation must include every supplier order line exactly once."
+        )
+
+    allocations = list(
+        db.scalars(
+            select(SupplierOrderAllocation)
+            .where(SupplierOrderAllocation.supplier_order_line_id.in_(lines_by_id))
+            .order_by(SupplierOrderAllocation.id)
+            .with_for_update()
+        ).all()
+    )
+    allocations_by_line: dict[int, list[SupplierOrderAllocation]] = {}
+    for allocation in allocations:
+        allocations_by_line.setdefault(allocation.supplier_order_line_id, []).append(
+            allocation
+        )
+    locked_preorders = _lock_preorders(
+        db, [allocation.preorder_id for allocation in allocations]
+    )
+    preorders_by_id = {preorder.id: preorder for preorder in locked_preorders}
+
+    planned: list[tuple[SupplierOrderLine, int, list[Preorder], int]] = []
+    for item in data.lines:
+        line = lines_by_id[item.line_id]
+        line_allocs = allocations_by_line.get(line.id, [])
+        allocated_preorders = []
+        for allocation in line_allocs:
+            preorder = preorders_by_id.get(allocation.preorder_id)
+            if preorder is None:
+                raise ConflictError(
+                    f"Preorder {allocation.preorder_id} was not found for this supplier order."
+                )
+            allocated_preorders.append(preorder)
+        allocated_preorders.sort(key=lambda preorder: (preorder.created_at, preorder.id))
+        allocated_ids = {preorder.id for preorder in allocated_preorders}
+
+        if item.arrived_preorder_ids is None:
+            selected = _fifo_complete_preorders(
+                allocated_preorders, item.received_quantity
+            )
+        else:
+            selected = []
+            for preorder_id in item.arrived_preorder_ids:
+                if preorder_id not in allocated_ids:
+                    missing = db.get(Preorder, preorder_id)
+                    if missing is None:
+                        raise NotFoundError(f"Preorder {preorder_id} was not found.")
+                    raise ConflictError(
+                        f"Preorder {preorder_id} is not allocated to supplier order line {line.id}."
+                    )
+                preorder = preorders_by_id[preorder_id]
+                if preorder.status != "ORDERED_FROM_SUPPLIER":
+                    raise ConflictError(
+                        f"Preorder {preorder.id} must be ORDERED_FROM_SUPPLIER to mark as arrived."
+                    )
+                selected.append(preorder)
+            assigned = sum(preorder.quantity for preorder in selected)
+            if assigned > item.received_quantity:
+                raise ConflictError(
+                    "Selected preorder quantities exceed received_quantity."
+                )
+
+        for preorder in selected:
+            if preorder.status != "ORDERED_FROM_SUPPLIER":
+                raise ConflictError(
+                    f"Preorder {preorder.id} must be ORDERED_FROM_SUPPLIER to mark as arrived."
+                )
+        assigned_quantity = sum(preorder.quantity for preorder in selected)
+        remainder = item.received_quantity - assigned_quantity
+        planned.append((line, item.received_quantity, selected, remainder))
+
+    try:
+        for line, received_quantity, selected, remainder in planned:
+            line.received_quantity = received_quantity
+            for preorder in selected:
+                preorder.status = "ARRIVED"
+            if remainder > 0:
+                db.add(
+                    InventoryLot(
+                        product_id=line.product_id,
+                        quantity_on_hand=remainder,
+                        supplier_order_line_id=line.id,
+                    )
+                )
+        order.status = "RECONCILED"
+        order.reconciled_at = utc_now()
+        order.reconciliation_notes = data.reconciliation_notes
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        _raise_if_inventory_lot_integrity_error(exc)
+        raise
+    return _get_supplier_order_loaded(db, order.id)
+
+
+def list_inventory_lots(
+    db: Session, product_id: int | None = None
+) -> list[InventoryLot]:
+    statement = select(InventoryLot).order_by(InventoryLot.id)
+    if product_id is not None:
+        statement = statement.where(InventoryLot.product_id == product_id)
+    return list(db.scalars(statement).all())
+
+
+def get_inventory_lot(db: Session, inventory_lot_id: int) -> InventoryLot:
+    lot = db.get(InventoryLot, inventory_lot_id)
+    if lot is None:
+        raise NotFoundError(f"Inventory lot {inventory_lot_id} was not found.")
+    return lot

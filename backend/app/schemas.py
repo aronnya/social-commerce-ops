@@ -325,7 +325,6 @@ SupplierOrderTransitionStatus = Literal[
     "CONFIRMED",
     "DISPATCHED",
     "ARRIVED",
-    "RECONCILED",
 ]
 
 
@@ -343,6 +342,7 @@ class SupplierOrderLineRead(BaseModel):
     id: int
     product_id: int
     quantity: int = Field(ge=1)
+    received_quantity: int | None = Field(default=None, ge=0)
     unit_cost: Decimal | None = Field(default=None, ge=0)
     notes: str | None
     allocations: list[SupplierOrderAllocationRead]
@@ -356,6 +356,8 @@ class SupplierOrderRead(BaseModel):
     status: SupplierOrderStatus
     notes: str | None
     placed_at: datetime | None
+    reconciled_at: datetime | None = None
+    reconciliation_notes: str | None = None
     created_at: datetime
     updated_at: datetime
     lines: list[SupplierOrderLineRead]
@@ -390,3 +392,53 @@ class SupplierOrderTransition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: SupplierOrderTransitionStatus
+
+
+class ReconciliationLineInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    line_id: int
+    received_quantity: int = Field(ge=0)
+    arrived_preorder_ids: list[int] | None = None
+
+    @field_validator("arrived_preorder_ids")
+    @classmethod
+    def reject_duplicate_arrived_preorder_ids(
+        cls, value: list[int] | None
+    ) -> list[int] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("arrived_preorder_ids must not contain duplicates.")
+        return value
+
+
+class SupplierOrderReconcile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lines: list[ReconciliationLineInput] = Field(min_length=1)
+    reconciliation_notes: str | None = None
+
+    @field_validator("reconciliation_notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+    @field_validator("lines")
+    @classmethod
+    def reject_duplicate_line_ids(
+        cls, value: list[ReconciliationLineInput]
+    ) -> list[ReconciliationLineInput]:
+        line_ids = [item.line_id for item in value]
+        if len(line_ids) != len(set(line_ids)):
+            raise ValueError("lines must not contain duplicate line_id values.")
+        return value
+
+
+class InventoryLotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_id: int
+    quantity_on_hand: int = Field(ge=0)
+    supplier_order_line_id: int | None
+    created_at: datetime
+    updated_at: datetime

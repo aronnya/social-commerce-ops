@@ -93,6 +93,7 @@ class Product(Base):
     supplier_order_lines: Mapped[list["SupplierOrderLine"]] = relationship(
         back_populates="product"
     )
+    inventory_lots: Mapped[list["InventoryLot"]] = relationship(back_populates="product")
 
 
 class Customer(Base):
@@ -230,6 +231,8 @@ class SupplierOrder(Base):
     status: Mapped[str] = mapped_column(String(32), default="DRAFT", index=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     placed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reconciliation_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
@@ -249,6 +252,10 @@ class SupplierOrderLine(Base):
             "unit_cost IS NULL OR unit_cost >= 0",
             name="ck_supplier_order_lines_unit_cost_non_negative",
         ),
+        CheckConstraint(
+            "received_quantity IS NULL OR received_quantity >= 0",
+            name="ck_supplier_order_lines_received_quantity_non_negative",
+        ),
         UniqueConstraint(
             "supplier_order_id",
             "product_id",
@@ -262,6 +269,7 @@ class SupplierOrderLine(Base):
     )
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     quantity: Mapped[int] = mapped_column(Integer)
+    received_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -273,6 +281,9 @@ class SupplierOrderLine(Base):
     product: Mapped[Product] = relationship(back_populates="supplier_order_lines")
     allocations: Mapped[list["SupplierOrderAllocation"]] = relationship(
         back_populates="line"
+    )
+    inventory_lot: Mapped["InventoryLot | None"] = relationship(
+        back_populates="supplier_order_line", uselist=False
     )
 
 
@@ -297,3 +308,30 @@ class SupplierOrderAllocation(Base):
 
     line: Mapped[SupplierOrderLine] = relationship(back_populates="allocations")
     preorder: Mapped[Preorder] = relationship(back_populates="supplier_order_allocation")
+
+
+class InventoryLot(Base):
+    """Physically owned stock not bound to a customer preorder."""
+
+    __tablename__ = "inventory_lots"
+    __table_args__ = (
+        CheckConstraint(
+            "quantity_on_hand >= 0", name="ck_inventory_lots_quantity_on_hand_non_negative"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    quantity_on_hand: Mapped[int] = mapped_column(Integer)
+    supplier_order_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("supplier_order_lines.id"), nullable=True, unique=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    product: Mapped[Product] = relationship(back_populates="inventory_lots")
+    supplier_order_line: Mapped[SupplierOrderLine | None] = relationship(
+        back_populates="inventory_lot"
+    )
