@@ -399,10 +399,8 @@ def test_payments_unchanged_and_ready_for_customer_not_automatic(
     assert len(payments) == 1
     assert payments[0].id == payment.id
     assert payments[0].amount == Decimal("20.00")
-    with pytest.raises(ConflictError):
-        transition_preorder(
-            db_session, preorder.id, PreorderTransition(status="FULFILLED")
-        )
+    with pytest.raises(ValidationError):
+        PreorderTransition(status="FULFILLED")
     ready = transition_preorder(
         db_session, preorder.id, PreorderTransition(status="READY_FOR_CUSTOMER")
     )

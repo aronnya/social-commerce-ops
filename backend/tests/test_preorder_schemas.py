@@ -76,3 +76,5 @@ def test_preorder_transition_rejects_invalid_status() -> None:
         PreorderTransition(status="INQUIRY")
     with pytest.raises(ValidationError):
         PreorderTransition(status="PAID")
+    with pytest.raises(ValidationError):
+        PreorderTransition(status="FULFILLED")

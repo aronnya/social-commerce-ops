@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.schemas import (
     CustomerCreate,
     EnquiryCreate,
+    FulfilmentCreate,
     PreorderCreate,
     PreorderTransition,
     PreorderUpdate,
@@ -25,6 +26,7 @@ from app.services import (
     create_supplier,
     delete_customer,
     delete_product,
+    fulfil_preorder,
     generate_supplier_order_draft,
     get_enquiry,
     get_preorder,
@@ -278,14 +280,14 @@ def test_happy_path_transitions(db_session: Session) -> None:
     )
     preorder = get_preorder(db_session, preorder.id)
     assert preorder.status == "ARRIVED"
-    for status in (
-        "READY_FOR_CUSTOMER",
-        "FULFILLED",
-    ):
-        preorder = transition_preorder(
-            db_session, preorder.id, PreorderTransition(status=status)
-        )
-        assert preorder.status == status
+    preorder = transition_preorder(
+        db_session, preorder.id, PreorderTransition(status="READY_FOR_CUSTOMER")
+    )
+    assert preorder.status == "READY_FOR_CUSTOMER"
+    preorder = fulfil_preorder(
+        db_session, preorder.id, FulfilmentCreate(method="HOME_COLLECTION")
+    )
+    assert preorder.status == "FULFILLED"
 
 
 def test_confirmed_to_cancelled_and_unavailable(db_session: Session) -> None:

@@ -14,6 +14,7 @@ from app.schemas import (
     EnquiryOutcome,
     EnquiryRead,
     EnquiryUpdate,
+    FulfilmentCreate,
     PaymentCreate,
     PaymentRead,
     PaymentUpdate,
@@ -224,9 +225,10 @@ def _to_preorder_read(db: Session, preorder) -> PreorderRead:
     values = {
         name: getattr(preorder, name)
         for name in PreorderRead.model_fields
-        if name != "payment_summary"
+        if name not in {"payment_summary", "fulfilment"}
     }
     values["payment_summary"] = services.payment_summary(db, preorder)
+    values["fulfilment"] = preorder.fulfilment
     return PreorderRead.model_validate(values)
 
 
@@ -282,6 +284,16 @@ def transition_preorder(
 ) -> PreorderRead:
     try:
         return _to_preorder_read(db, services.transition_preorder(db, preorder_id, payload))
+    except (services.NotFoundError, services.ConflictError) as exc:
+        _http_error(exc)
+
+
+@router.post("/preorders/{preorder_id}/fulfil", response_model=PreorderRead)
+def fulfil_preorder(
+    preorder_id: int, payload: FulfilmentCreate, db: Session = Depends(get_db)
+) -> PreorderRead:
+    try:
+        return _to_preorder_read(db, services.fulfil_preorder(db, preorder_id, payload))
     except (services.NotFoundError, services.ConflictError) as exc:
         _http_error(exc)
 

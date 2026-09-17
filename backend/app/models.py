@@ -34,6 +34,18 @@ PAYMENT_METHODS = (
 )
 
 
+FULFILMENT_METHODS = (
+    "HOME_COLLECTION",
+    "POST",
+)
+
+
+POSTAGE_TYPES = (
+    "REGULAR",
+    "REGISTERED",
+)
+
+
 SUPPLIER_ORDER_STATUSES = (
     "DRAFT",
     "PLACED",
@@ -184,6 +196,9 @@ class Preorder(Base):
     supplier_order_allocation: Mapped["SupplierOrderAllocation | None"] = relationship(
         back_populates="preorder", uselist=False
     )
+    fulfilment: Mapped["Fulfilment | None"] = relationship(
+        back_populates="preorder", uselist=False
+    )
 
 
 class Payment(Base):
@@ -211,6 +226,70 @@ class Payment(Base):
     )
 
     preorder: Mapped[Preorder] = relationship(back_populates="payments")
+
+
+class Fulfilment(Base):
+    """How a customer received a ready preorder. One row per preorder; write-once."""
+
+    __tablename__ = "fulfilments"
+    __table_args__ = (
+        UniqueConstraint("preorder_id", name="uq_fulfilments_preorder_id"),
+        CheckConstraint(
+            "method IN ("
+            + ", ".join(f"'{value}'" for value in FULFILMENT_METHODS)
+            + ")",
+            name="ck_fulfilments_method",
+        ),
+        CheckConstraint(
+            "postage_type IS NULL OR postage_type IN ("
+            + ", ".join(f"'{value}'" for value in POSTAGE_TYPES)
+            + ")",
+            name="ck_fulfilments_postage_type",
+        ),
+        CheckConstraint(
+            "postage_cost IS NULL OR postage_cost >= 0",
+            name="ck_fulfilments_postage_cost_non_negative",
+        ),
+        CheckConstraint(
+            "("
+            "method = 'HOME_COLLECTION'"
+            " AND postage_type IS NULL"
+            " AND delivery_address IS NULL"
+            " AND postage_cost IS NULL"
+            " AND tracking_reference IS NULL"
+            ") OR ("
+            "method = 'POST'"
+            " AND postage_type = 'REGULAR'"
+            " AND delivery_address IS NOT NULL"
+            " AND btrim(delivery_address) <> ''"
+            " AND tracking_reference IS NULL"
+            ") OR ("
+            "method = 'POST'"
+            " AND postage_type = 'REGISTERED'"
+            " AND delivery_address IS NOT NULL"
+            " AND btrim(delivery_address) <> ''"
+            " AND tracking_reference IS NOT NULL"
+            " AND btrim(tracking_reference) <> ''"
+            ")",
+            name="ck_fulfilments_method_fields",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    preorder_id: Mapped[int] = mapped_column(ForeignKey("preorders.id"))
+    method: Mapped[str] = mapped_column(String(32))
+    postage_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    delivery_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    postage_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    tracking_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fulfilled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    preorder: Mapped[Preorder] = relationship(back_populates="fulfilment")
 
 
 class SupplierOrder(Base):

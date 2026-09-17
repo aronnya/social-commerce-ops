@@ -190,10 +190,16 @@ def test_attention_item_disappears_after_workflow(db_client: TestClient) -> None
         json={"status": "READY_FOR_CUSTOMER"},
     )
     assert _types(_attention(db_client)) == ["preorder_needs_fulfilment"]
-    db_client.post(
+    blocked = db_client.post(
         f"/api/v1/preorders/{preorder['id']}/transitions",
         json={"status": "FULFILLED"},
     )
+    assert blocked.status_code == 422
+    fulfilled = db_client.post(
+        f"/api/v1/preorders/{preorder['id']}/fulfil",
+        json={"method": "HOME_COLLECTION"},
+    )
+    assert fulfilled.status_code == 200
     assert _attention(db_client)["items"] == []
 
 

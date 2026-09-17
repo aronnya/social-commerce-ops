@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import (
     Customer,
     Enquiry,
+    Fulfilment,
     InventoryLot,
     Payment,
     Preorder,
@@ -28,6 +29,7 @@ from app.schemas import (
     DemandOverview,
     EnquiryCreate,
     EnquiryUpdate,
+    FulfilmentCreate,
     FulfilmentSnapshot,
     LOST_DEMAND_REASONS,
     LostDemandBucket,
@@ -59,11 +61,12 @@ class ConflictError(Exception):
 
 # ORDERED_FROM_SUPPLIER is set only by place_supplier_order.
 # ARRIVED for allocated preorders is set only by reconcile_supplier_order.
+# FULFILLED is set only by fulfil_preorder.
 PREORDER_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "CONFIRMED": frozenset({"CANCELLED", "SUPPLIER_UNAVAILABLE"}),
     "ORDERED_FROM_SUPPLIER": frozenset({"CANCELLED", "SUPPLIER_UNAVAILABLE"}),
     "ARRIVED": frozenset({"READY_FOR_CUSTOMER", "SUPPLIER_UNAVAILABLE"}),
-    "READY_FOR_CUSTOMER": frozenset({"FULFILLED", "CANCELLED"}),
+    "READY_FOR_CUSTOMER": frozenset({"CANCELLED"}),
     "FULFILLED": frozenset(),
     "CANCELLED": frozenset(),
     "SUPPLIER_UNAVAILABLE": frozenset(),
@@ -406,6 +409,10 @@ def transition_preorder(
     db: Session, preorder_id: int, data: PreorderTransition
 ) -> Preorder:
     preorder = get_preorder(db, preorder_id)
+    if data.status == "FULFILLED":
+        raise ConflictError(
+            "Completing fulfilment must use the dedicated operation."
+        )
     allowed = PREORDER_ALLOWED_TRANSITIONS.get(preorder.status, frozenset())
     if data.status == preorder.status or data.status not in allowed:
         raise ConflictError(
@@ -414,6 +421,49 @@ def transition_preorder(
     preorder.status = data.status
     db.commit()
     db.refresh(preorder)
+    return preorder
+
+
+def _raise_if_fulfilment_integrity_error(exc: IntegrityError) -> None:
+    message = str(getattr(exc, "orig", exc)).lower()
+    if "fulfilments" in message or "uq_fulfilments_preorder_id" in message:
+        raise ConflictError("This preorder already has a fulfilment.") from exc
+
+
+def fulfil_preorder(db: Session, preorder_id: int, data: FulfilmentCreate) -> Preorder:
+    locked = _lock_preorders(db, [preorder_id])
+    if not locked:
+        raise NotFoundError(f"Preorder {preorder_id} was not found.")
+    preorder = locked[0]
+    if preorder.status != "READY_FOR_CUSTOMER":
+        raise ConflictError(
+            f"Preorder {preorder.id} must be READY_FOR_CUSTOMER to fulfil."
+        )
+    if preorder.fulfilment is not None:
+        raise ConflictError("This preorder already has a fulfilment.")
+
+    payload = data.model_dump()
+    fulfilment = Fulfilment(
+        preorder_id=preorder.id,
+        method=payload["method"],
+        postage_type=payload["postage_type"],
+        delivery_address=payload["delivery_address"],
+        postage_cost=payload["postage_cost"],
+        tracking_reference=payload["tracking_reference"],
+        notes=payload["notes"],
+        fulfilled_at=utc_now(),
+    )
+    db.add(fulfilment)
+    preorder.status = "FULFILLED"
+    try:
+        db.flush()
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        _raise_if_fulfilment_integrity_error(exc)
+        raise
+    db.refresh(preorder)
+    _ = preorder.fulfilment
     return preorder
 
 

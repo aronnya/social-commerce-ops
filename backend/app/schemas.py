@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _strip_supplier_name(value: object) -> object:
@@ -42,6 +42,19 @@ PreorderStatus = Literal[
 PaymentMethod = Literal["BANK_TRANSFER", "REVOLUT"]
 
 PaymentSummaryStatus = Literal["UNPAID", "PARTIALLY_PAID", "PAID", "OVERPAID"]
+
+FulfilmentMethod = Literal["HOME_COLLECTION", "POST"]
+
+PostageType = Literal["REGULAR", "REGISTERED"]
+
+PreorderTransitionStatus = Literal[
+    "CONFIRMED",
+    "ORDERED_FROM_SUPPLIER",
+    "ARRIVED",
+    "READY_FOR_CUSTOMER",
+    "CANCELLED",
+    "SUPPLIER_UNAVAILABLE",
+]
 
 
 class SupplierCreate(BaseModel):
@@ -245,7 +258,7 @@ class PreorderUpdate(BaseModel):
 
 
 class PreorderTransition(BaseModel):
-    status: PreorderStatus
+    status: PreorderTransitionStatus
 
 
 class PaymentSummary(BaseModel):
@@ -253,6 +266,60 @@ class PaymentSummary(BaseModel):
     amount_paid: Decimal
     outstanding_balance: Decimal | None
     status: PaymentSummaryStatus | None
+
+
+class FulfilmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: FulfilmentMethod
+    postage_type: PostageType | None = None
+    delivery_address: str | None = None
+    postage_cost: Decimal | None = Field(default=None, ge=0)
+    tracking_reference: str | None = Field(default=None, max_length=200)
+    notes: str | None = None
+
+    @field_validator("delivery_address", "tracking_reference", "notes", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value: object) -> object:
+        return _strip_optional_text(value)
+
+    @model_validator(mode="after")
+    def validate_method_fields(self) -> "FulfilmentCreate":
+        if self.method == "HOME_COLLECTION":
+            if self.postage_type is not None:
+                raise ValueError("postage_type must be null for HOME_COLLECTION.")
+            if self.delivery_address is not None:
+                raise ValueError("delivery_address must be null for HOME_COLLECTION.")
+            if self.postage_cost is not None:
+                raise ValueError("postage_cost must be null for HOME_COLLECTION.")
+            if self.tracking_reference is not None:
+                raise ValueError("tracking_reference must be null for HOME_COLLECTION.")
+            return self
+        if self.postage_type is None:
+            raise ValueError("postage_type is required for POST.")
+        if self.delivery_address is None:
+            raise ValueError("delivery_address is required for POST.")
+        if self.postage_type == "REGULAR" and self.tracking_reference is not None:
+            raise ValueError("tracking_reference must be null for REGULAR postage.")
+        if self.postage_type == "REGISTERED" and self.tracking_reference is None:
+            raise ValueError("tracking_reference is required for REGISTERED postage.")
+        return self
+
+
+class FulfilmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    preorder_id: int
+    method: FulfilmentMethod
+    postage_type: PostageType | None
+    delivery_address: str | None
+    postage_cost: Decimal | None
+    tracking_reference: str | None
+    notes: str | None
+    fulfilled_at: datetime
+    created_at: datetime
+    updated_at: datetime
 
 
 class PreorderRead(BaseModel):
@@ -269,6 +336,7 @@ class PreorderRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     payment_summary: PaymentSummary
+    fulfilment: FulfilmentRead | None = None
 
 
 class PaymentCreate(BaseModel):

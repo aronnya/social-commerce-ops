@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.schemas import (
     CustomerCreate,
     EnquiryCreate,
+    FulfilmentCreate,
     PaymentCreate,
     PreorderCreate,
     PreorderTransition,
@@ -21,6 +22,7 @@ from app.services import (
     create_preorder,
     create_product,
     create_supplier,
+    fulfil_preorder,
     generate_supplier_order_draft,
     list_attention,
     place_supplier_order,
@@ -161,7 +163,7 @@ def test_reconcile_then_ready_then_fulfil_disappears(db_session: Session) -> Non
     )
     queue = list_attention(db_session)
     assert _types(queue) == ["preorder_needs_fulfilment"]
-    transition_preorder(db_session, preorder.id, PreorderTransition(status="FULFILLED"))
+    fulfil_preorder(db_session, preorder.id, FulfilmentCreate(method="HOME_COLLECTION"))
     assert _types(list_attention(db_session)) == []
 
 

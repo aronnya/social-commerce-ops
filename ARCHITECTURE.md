@@ -77,6 +77,7 @@ Business rules belong in `services.py` (or equivalent domain functions), not onl
 | `supplier_orders` | Implemented | A batch sent to a supplier. `RECONCILED` is set only by `POST /supplier-orders/{id}/reconcile`. |
 | `supplier_order_lines` | Implemented | Consolidated rows: ordered `quantity` is immutable; `received_quantity` is a separate fact |
 | `inventory_lots` | Implemented | Physically owned/unassigned stock. Created by reconciliation remainder; API is read-only in v1. |
+| `fulfilments` | Implemented | How a customer received a ready preorder (`HOME_COLLECTION` or `POST`). 1:1 with preorder; write-once. Completing uses `POST /api/v1/preorders/{id}/fulfil`. |
 | `workflow_events` | Later | Audit trail of important workflow changes |
 
 Relationships in plain English:
@@ -88,6 +89,7 @@ Relationships in plain English:
 - A preorder is for one customer and one product. It may come from an enquiry (optional, because walk-in sales exist).
 - A preorder may be attached to one **active** supplier order once it is grouped for buying. It must not be included in multiple active supplier orders.
 - Payments belong to a preorder. Several payments can add up to the agreed price. Payment status is calculated from those rows.
+- A fulfilled preorder has at most one **fulfilment** record: collection at home, or post (regular or registered). The address written on a packet is snapshotted on that row, not on the customer. Postage cost is optional operational spend and is not part of payment totals. Preorders marked `FULFILLED` before this table existed may have no fulfilment row; those facts are not invented.
 - A supplier order has many lines. A line consolidates quantity for a product/variant, still pointing at the customer preorders. Ordered quantity and received quantity are separate facts; discrepancy is derived (`received - ordered`). Customer-bound preorder units do not enter inventory lots.
 - An inventory lot points at a product and records quantity actually on hand that the business owns and has not assigned to a customer preorder. Direct stock purchases, later receipts, and consumption are deferred.
 - Workflow events (when added) point at the relevant entity and record what happened and when.
@@ -97,6 +99,8 @@ Why enquiry and preorder are separate: analytics must count “people asked abou
 Why payment status is not a preorder status: the dress can already be ordered from Pakistan while the customer has paid, partly paid, or not paid. Mixing those into one enum would make reports and rules messy.
 
 Why supplier-order status is separate: one supplier shipment can cover many customer preorders. The shipment can be “dispatched” while an individual preorder is still “ordered from supplier”.
+
+Why fulfilment is not a preorder column dump: method, postage, address, and tracking are operational facts about the handoff, like payment rows. `READY_FOR_CUSTOMER` → `FULFILLED` is owned by `fulfil_preorder`, the same way placement owns `ORDERED_FROM_SUPPLIER` and reconciliation owns `ARRIVED`. Generic transitions cannot set `FULFILLED`. Payment state does not gate fulfilment. v1 records are immutable (no update/delete). An Post, live tracking, labels, ETAs, and extra shipping statuses are deferred.
 
 ## Operational behaviours (how the domain should work)
 
@@ -111,7 +115,7 @@ v1 types, in display order:
 1. `preorder_overpaid` — `sum(payments) > quantity × agreed_price`. May persist until refunds exist; payment amounts cannot be reduced.
 2. `supplier_order_needs_reconciliation` — supplier order `ARRIVED`
 3. `preorder_needs_customer_ready` — preorder `ARRIVED`
-4. `preorder_needs_fulfilment` — preorder `READY_FOR_CUSTOMER`
+4. `preorder_needs_fulfilment` — preorder `READY_FOR_CUSTOMER`. Completing `fulfil_preorder` sets `FULFILLED` and the item disappears; the queue is not redesigned.
 5. `supplier_order_draft_needs_placement` — supplier order `DRAFT`
 6. `preorder_needs_supplier_order` — `CONFIRMED` with no supplier-order allocation
 
@@ -193,7 +197,7 @@ Resource endpoints will exist for the entities above. In addition, the API shoul
 | Products | `GET/POST /api/v1/products`, `GET/PATCH/DELETE /api/v1/products/{id}` (`?supplier_id=` filter) |
 | Customers | `GET/POST /api/v1/customers`, `GET/PATCH/DELETE /api/v1/customers/{id}` |
 | Enquiries | `GET/POST /api/v1/enquiries`, `PATCH` for outcome |
-| Preorders | `GET/POST /api/v1/preorders`, `POST /api/v1/preorders/{id}/transitions` |
+| Preorders | `GET/POST /api/v1/preorders`, `POST /api/v1/preorders/{id}/transitions`, `POST /api/v1/preorders/{id}/fulfil` (`FULFILLED` is not a generic transition) |
 | Payments | `GET/POST /api/v1/preorders/{id}/payments` (status is derived, not PATCHed independently) |
 | Supplier orders | generate draft from confirmed preorders; lines; transitions; reconcile received quantities |
 | Inventory | list, receive, allocate (with availability checks) |
@@ -213,7 +217,7 @@ Exact paths can be chosen when those milestones are built. Do not add messaging 
 4. Payments are recorded as they arrive; paid / outstanding / payment status are derived.
 5. The owner generates a draft supplier order from confirmed preorders for that supplier, reviews quantities, then marks it `PLACED`.
 6. On arrival, the owner reconciles received vs ordered quantities; received items update preorders and/or inventory.
-7. Ready items wait in the attention queue until collection/delivery (`FULFILLED`). Inventory-backed sales decrement available stock.
+7. Ready items wait in the attention queue until the owner records fulfilment: home collection, or post (`REGULAR` / `REGISTERED`, address snapshot, optional postage cost, registered tracking required). That operation sets `FULFILLED`. Inventory-backed sales decrement available stock (deferred).
 8. Analytics queries group enquiries and preorders in SQL.
 
 ## State models (planned)
@@ -222,7 +226,13 @@ Exact paths can be chosen when those milestones are built. Do not add messaging 
 
 Happy path: `CONFIRMED` → `ORDERED_FROM_SUPPLIER` → `ARRIVED` → `READY_FOR_CUSTOMER` → `FULFILLED`
 
-Also allowed as exits (exact edges to be coded later): `CANCELLED`, `SUPPLIER_UNAVAILABLE`
+`FULFILLED` is set only by `POST /api/v1/preorders/{id}/fulfil` (`fulfil_preorder`). From `READY_FOR_CUSTOMER`, generic transitions allow `CANCELLED` only.
+
+- `HOME_COLLECTION`: no postal fields
+- `POST` + `REGULAR`: delivery address required, postage cost optional, tracking reference null
+- `POST` + `REGISTERED`: delivery address required, postage cost optional, tracking reference required
+
+Payment remains independent of fulfilment. `CANCELLED` and `SUPPLIER_UNAVAILABLE` remain exits on earlier preorder states.
 
 ### Payment (derived from payment rows; not a stored column)
 
@@ -265,6 +275,7 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 - Demand analytics is derived and read-only (`GET /api/v1/analytics/demand`). Enquiry `PREORDERED` can still be set without a preorder; conversion uses the preorder link and exposes mismatch counts. No `enquired_at` index yet.
 - Attention queue is derived (no table); `GET /api/v1/attention` is read-only. `OVERPAID` items can stick until refunds exist.
 - Catalogue products are not inventory; unassigned owned stock lives on `InventoryLot`, not on `Product`
+- No An Post integration, live tracking, labels, postage price list, or extra shipping statuses. Fulfilment rows are immutable in v1 (no PATCH/DELETE).
 - Frontend still only checks that the API health endpoint responds
 
 ## Milestone 2 notes
