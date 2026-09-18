@@ -62,6 +62,24 @@ export type SupplierOrderStatus =
   | 'ARRIVED'
   | 'RECONCILED'
 
+export type SupplierOrderTransitionStatus = 'CONFIRMED' | 'DISPATCHED' | 'ARRIVED'
+
+export type SupplierOrderGenerateDraft = {
+  supplier_id: number
+  preorder_ids?: number[]
+}
+
+export type ReconciliationLineInput = {
+  line_id: number
+  received_quantity: number
+  arrived_preorder_ids?: number[]
+}
+
+export type SupplierOrderReconcile = {
+  lines: ReconciliationLineInput[]
+  reconciliation_notes?: string | null
+}
+
 export type AttentionType =
   | 'preorder_overpaid'
   | 'supplier_order_needs_reconciliation'

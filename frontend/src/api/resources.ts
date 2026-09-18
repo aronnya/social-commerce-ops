@@ -18,7 +18,10 @@ import type {
   Product,
   Supplier,
   SupplierOrder,
+  SupplierOrderGenerateDraft,
   SupplierOrderListParams,
+  SupplierOrderReconcile,
+  SupplierOrderTransitionStatus,
 } from './types'
 
 export function getHealth(): Promise<HealthResponse> {
@@ -127,6 +130,35 @@ export function getSupplierOrders(
 
 export function getSupplierOrder(supplierOrderId: number): Promise<SupplierOrder> {
   return apiGet<SupplierOrder>(`/api/v1/supplier-orders/${supplierOrderId}`)
+}
+
+export function generateSupplierOrderDraft(
+  payload: SupplierOrderGenerateDraft,
+): Promise<SupplierOrder> {
+  return apiPost<SupplierOrder>('/api/v1/supplier-orders/generate-draft', payload)
+}
+
+export function placeSupplierOrder(supplierOrderId: number): Promise<SupplierOrder> {
+  return apiPost<SupplierOrder>(`/api/v1/supplier-orders/${supplierOrderId}/place`, {})
+}
+
+export function transitionSupplierOrder(
+  supplierOrderId: number,
+  status: SupplierOrderTransitionStatus,
+): Promise<SupplierOrder> {
+  return apiPost<SupplierOrder>(`/api/v1/supplier-orders/${supplierOrderId}/transitions`, {
+    status,
+  })
+}
+
+export function reconcileSupplierOrder(
+  supplierOrderId: number,
+  payload: SupplierOrderReconcile,
+): Promise<SupplierOrder> {
+  return apiPost<SupplierOrder>(
+    `/api/v1/supplier-orders/${supplierOrderId}/reconcile`,
+    payload,
+  )
 }
 
 export function getInventory(productId?: number): Promise<InventoryLot[]> {

@@ -10,6 +10,7 @@ import { InventoryPage } from './pages/InventoryPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { PreorderDetailPage } from './pages/PreorderDetailPage'
 import { PreordersPage } from './pages/PreordersPage'
+import { SupplierOrderDetailPage } from './pages/SupplierOrderDetailPage'
 import { SupplierOrdersPage } from './pages/SupplierOrdersPage'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="preorders" element={<PreordersPage />} />
             <Route path="preorders/:id" element={<PreorderDetailPage />} />
             <Route path="supplier-orders" element={<SupplierOrdersPage />} />
+            <Route path="supplier-orders/:id" element={<SupplierOrderDetailPage />} />
             <Route path="catalogue" element={<CataloguePage />} />
             <Route path="inventory" element={<InventoryPage />} />
             <Route path="customers" element={<CustomersPage />} />
