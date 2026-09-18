@@ -996,8 +996,24 @@ button {
   vertical-align: middle;
 }
 
+.data-table tbody tr {
+  position: relative;
+}
+
 .data-table tbody tr:hover {
   background: #f7fafc;
+}
+
+.data-table__row-link {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: inherit;
+}
+
+.data-table__row-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
 }
 
 .data-table__id {
@@ -1071,5 +1087,210 @@ button {
   .table-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+.content__inner:has(.preorder-detail) {
+  max-width: 1280px;
+}
+
+.preorder-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  --dash-radius: 14px;
+  --dash-shadow: 0 10px 28px rgba(27, 36, 48, 0.045);
+  --dash-border: rgba(27, 36, 48, 0.07);
+  --pastel-sky: #eaf4f9;
+  --pastel-sky-border: #c9deea;
+}
+
+.detail-back {
+  width: fit-content;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.detail-back:hover {
+  text-decoration: underline;
+}
+
+.detail-header__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.7rem;
+}
+
+.preorder-detail h1 {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.detail-header p {
+  margin-top: 0.28rem;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.preorder-detail .panel {
+  padding: 0.95rem 1.05rem 1rem;
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius);
+  background: var(--color-surface);
+  box-shadow: var(--dash-shadow);
+}
+
+.preorder-detail h2 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.detail-lead {
+  margin: 0.35rem 0 0.7rem;
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+
+.detail-muted {
+  margin: 0.35rem 0 0.75rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.detail-notes {
+  margin: 0.55rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(17rem, 0.82fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.detail-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.detail-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem 1rem;
+  margin: 0;
+}
+
+.detail-facts--stack {
+  grid-template-columns: 1fr;
+}
+
+.detail-facts dt {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #6b7885;
+}
+
+.detail-facts dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.88rem;
+}
+
+.detail-facts__wide {
+  grid-column: 1 / -1;
+}
+
+.detail-payment-status {
+  margin: 0.45rem 0 0.7rem;
+}
+
+.detail-state {
+  min-height: 10rem;
+}
+
+.preorder-detail .panel .page-state {
+  margin: 0;
+  min-height: 8.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem 0.75rem;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.preorder-detail .page-state__retry {
+  align-self: center;
+  margin-top: 0.75rem;
+  padding: 0.38rem 0.85rem;
+  border: 1px solid var(--pastel-sky-border);
+  border-radius: 999px;
+  background: var(--pastel-sky);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.progress-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.7rem 0 0;
+  padding: 0;
+}
+
+.progress-step {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.85rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #eef1f4;
+  color: #8a96a3;
+}
+
+.progress-step.is-done {
+  background: #e7f5ee;
+  color: #2c7a57;
+}
+
+.progress-step.is-current {
+  background: #e7f1f6;
+  color: #3c6d86;
+  box-shadow: 0 0 0 2px rgba(60, 109, 134, 0.22);
+}
+
+.progress-outcome {
+  margin: 0.8rem 0 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 11px;
+  background: #f8eeee;
+  color: #8a3f3f;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
   }
 }

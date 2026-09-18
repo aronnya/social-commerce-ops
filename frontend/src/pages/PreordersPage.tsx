@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { getPreorders } from '../api/resources'
 import type {
@@ -414,8 +414,12 @@ export function PreordersPage() {
                     const meta = productMeta(product)
                     const payment = row.payment_summary.status
                     return (
-                      <tr key={row.id}>
-                        <td className="data-table__id">#{row.id}</td>
+                      <tr key={row.id} className="data-table__clickable">
+                        <td className="data-table__id">
+                          <Link to={`/preorders/${row.id}`} className="data-table__row-link">
+                            #{row.id}
+                          </Link>
+                        </td>
                         <td>{reference.customerName(row.customer_id)}</td>
                         <td>
                           <span className="cell-primary">{reference.productName(row.product_id)}</span>
