@@ -1,41 +1,34 @@
-import { useEffect, useState } from 'react'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { ReferenceDataProvider } from './api/referenceData'
+import { AppLayout } from './layout/AppLayout'
+import { CataloguePage } from './pages/CataloguePage'
+import { CustomersPage } from './pages/CustomersPage'
+import { DashboardPage } from './pages/DashboardPage'
+import { EnquiriesPage } from './pages/EnquiriesPage'
+import { InsightsPage } from './pages/InsightsPage'
+import { InventoryPage } from './pages/InventoryPage'
+import { NotFoundPage } from './pages/NotFoundPage'
+import { PreordersPage } from './pages/PreordersPage'
+import { SupplierOrdersPage } from './pages/SupplierOrdersPage'
 
-type HealthState = 'checking' | 'ok' | 'error'
-
-function App() {
-  const [health, setHealth] = useState<HealthState>('checking')
-  const [detail, setDetail] = useState('')
-
-  useEffect(() => {
-    fetch('/health')
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
-        }
-        const body = (await response.json()) as { status?: string }
-        if (body.status !== 'ok') {
-          throw new Error('Unexpected health payload')
-        }
-        setHealth('ok')
-      })
-      .catch((error: unknown) => {
-        setHealth('error')
-        setDetail(error instanceof Error ? error.message : 'Unknown error')
-      })
-  }, [])
-
+export default function App() {
   return (
-    <main>
-      <h1>Social Commerce Operations Platform</h1>
-      <p>Private internal operations app. UI design will come from Figma later.</p>
-      <p>
-        Backend health:{' '}
-        {health === 'checking' && 'checking…'}
-        {health === 'ok' && 'ok'}
-        {health === 'error' && `unavailable (${detail})`}
-      </p>
-    </main>
+    <BrowserRouter>
+      <ReferenceDataProvider>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route index element={<DashboardPage />} />
+            <Route path="enquiries" element={<EnquiriesPage />} />
+            <Route path="preorders" element={<PreordersPage />} />
+            <Route path="supplier-orders" element={<SupplierOrdersPage />} />
+            <Route path="catalogue" element={<CataloguePage />} />
+            <Route path="inventory" element={<InventoryPage />} />
+            <Route path="customers" element={<CustomersPage />} />
+            <Route path="insights" element={<InsightsPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </ReferenceDataProvider>
+    </BrowserRouter>
   )
 }
-
-export default App
