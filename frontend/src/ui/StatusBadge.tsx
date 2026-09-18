@@ -1,4 +1,12 @@
-export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+export type StatusTone =
+  | 'neutral'
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'lavender'
+  | 'warm'
+  | 'mint'
 
 type StatusBadgeProps = {
   label: string
