@@ -1,4 +1,4 @@
-import { apiGet, withQuery } from './client'
+import { apiGet, apiPost, withQuery } from './client'
 import type {
   AttentionQueue,
   Customer,
@@ -11,6 +11,7 @@ import type {
   Payment,
   Preorder,
   PreorderListParams,
+  PreorderTransitionStatus,
   Product,
   Supplier,
   SupplierOrder,
@@ -75,6 +76,13 @@ export function getPreorders(params: PreorderListParams = {}): Promise<Preorder[
 
 export function getPreorder(preorderId: number): Promise<Preorder> {
   return apiGet<Preorder>(`/api/v1/preorders/${preorderId}`)
+}
+
+export function transitionPreorder(
+  preorderId: number,
+  status: PreorderTransitionStatus,
+): Promise<Preorder> {
+  return apiPost<Preorder>(`/api/v1/preorders/${preorderId}/transitions`, { status })
 }
 
 export function getPayments(preorderId: number): Promise<Payment[]> {

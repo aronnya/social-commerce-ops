@@ -18,6 +18,8 @@ export type PreorderStatus =
   | 'CANCELLED'
   | 'SUPPLIER_UNAVAILABLE'
 
+export type PreorderTransitionStatus = Exclude<PreorderStatus, 'FULFILLED'>
+
 export type PaymentMethod = 'BANK_TRANSFER' | 'REVOLUT'
 
 export type PaymentSummaryStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'OVERPAID'

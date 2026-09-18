@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { getPreorder } from '../api/resources'
+import { getPreorder, transitionPreorder } from '../api/resources'
 import type {
   Fulfilment,
   Money,
   PaymentSummaryStatus,
   Preorder,
   PreorderStatus,
+  PreorderTransitionStatus,
   Product,
   Supplier,
 } from '../api/types'
@@ -105,6 +106,26 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   })
 }
 
+function describeActionError(caught: unknown): string {
+  if (caught instanceof ApiError && caught.status === 409) {
+    return caught.message
+  }
+  if (caught instanceof ApiError && caught.status === 0) {
+    return caught.message
+  }
+  if (caught instanceof ApiError && caught.status === 422) {
+    return 'The request was not valid.'
+  }
+  return 'This action could not be completed.'
+}
+
+function confirmTerminal(preorderId: number, action: 'cancel' | 'unavailable'): boolean {
+  if (action === 'cancel') {
+    return window.confirm(`Cancel preorder #${preorderId}?`)
+  }
+  return window.confirm(`Mark preorder #${preorderId} as supplier unavailable?`)
+}
+
 function describeError(caught: unknown): { kind: 'not-found' | 'error'; message: string } {
   if (caught instanceof ApiError && caught.status === 404) {
     return { kind: 'not-found', message: 'This preorder does not exist.' }
@@ -159,10 +180,44 @@ export function PreorderDetailPage() {
   const reference = useReferenceData()
   const [tick, setTick] = useState(0)
   const [result, setResult] = useState<DetailResult | null>(null)
+  const [mutating, setMutating] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const actionLock = useRef(false)
 
   const retry = useCallback(() => {
+    setActionError(null)
     setTick((value) => value + 1)
   }, [])
+
+  const runTransition = useCallback(
+    async (status: PreorderTransitionStatus, terminal?: 'cancel' | 'unavailable') => {
+      if (preorderId === null || actionLock.current) {
+        return
+      }
+      if (terminal && !confirmTerminal(preorderId, terminal)) {
+        return
+      }
+      actionLock.current = true
+      setMutating(true)
+      setActionError(null)
+      try {
+        const data = await withTimeout(transitionPreorder(preorderId, status), 20000)
+        setResult({
+          id: preorderId,
+          tick,
+          preorder: data,
+          errorKind: null,
+          message: '',
+        })
+      } catch (caught: unknown) {
+        setActionError(describeActionError(caught))
+      } finally {
+        actionLock.current = false
+        setMutating(false)
+      }
+    },
+    [preorderId, tick],
+  )
 
   useEffect(() => {
     if (preorderId === null) {
@@ -287,6 +342,13 @@ export function PreorderDetailPage() {
           </p>
         </div>
       </header>
+
+      <PreorderActions
+        preorder={preorder}
+        busy={mutating}
+        error={actionError}
+        onTransition={runTransition}
+      />
 
       <div className="detail-grid">
         <section className="panel">
@@ -443,6 +505,87 @@ export function PreorderDetailPage() {
         </section>
       ) : null}
     </div>
+  )
+}
+
+function PreorderActions({
+  preorder,
+  busy,
+  error,
+  onTransition,
+}: {
+  preorder: Preorder
+  busy: boolean
+  error: string | null
+  onTransition: (
+    status: PreorderTransitionStatus,
+    terminal?: 'cancel' | 'unavailable',
+  ) => void
+}) {
+  const status = preorder.status
+  const hint =
+    status === 'CONFIRMED'
+      ? 'Supplier ordering is managed through Supplier Orders.'
+      : status === 'ORDERED_FROM_SUPPLIER'
+        ? 'Arrival is recorded during supplier reconciliation.'
+        : status === 'READY_FOR_CUSTOMER'
+          ? 'Fulfilment is recorded with a dedicated fulfilment step.'
+          : status === 'FULFILLED'
+            ? 'This preorder is complete.'
+            : status === 'CANCELLED'
+              ? 'This preorder is cancelled.'
+              : status === 'SUPPLIER_UNAVAILABLE'
+                ? 'This preorder is marked supplier unavailable.'
+                : null
+
+  const canReady = status === 'ARRIVED'
+  const canCancel =
+    status === 'CONFIRMED' ||
+    status === 'ORDERED_FROM_SUPPLIER' ||
+    status === 'READY_FOR_CUSTOMER'
+  const canUnavailable =
+    status === 'CONFIRMED' || status === 'ORDERED_FROM_SUPPLIER' || status === 'ARRIVED'
+  const hasButtons = canReady || canCancel || canUnavailable
+
+  return (
+    <section className="panel detail-actions" aria-label="Preorder actions">
+      {hint ? <p className="detail-muted">{hint}</p> : null}
+      {hasButtons ? (
+        <div className="detail-actions__row">
+          {canReady ? (
+            <button
+              type="button"
+              className="action-btn action-btn--primary"
+              disabled={busy}
+              onClick={() => onTransition('READY_FOR_CUSTOMER')}
+            >
+              Mark ready for customer
+            </button>
+          ) : null}
+          {canCancel ? (
+            <button
+              type="button"
+              className="action-btn action-btn--danger"
+              disabled={busy}
+              onClick={() => onTransition('CANCELLED', 'cancel')}
+            >
+              Cancel preorder
+            </button>
+          ) : null}
+          {canUnavailable ? (
+            <button
+              type="button"
+              className="action-btn action-btn--danger"
+              disabled={busy}
+              onClick={() => onTransition('SUPPLIER_UNAVAILABLE', 'unavailable')}
+            >
+              Supplier unavailable
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {error ? <p className="detail-action-error">{error}</p> : null}
+    </section>
   )
 }
 
