@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { getPreorder, transitionPreorder } from '../api/resources'
+import { getPreorder, createPayment, fulfilPreorder, transitionPreorder } from '../api/resources'
 import type {
   Fulfilment,
+  FulfilmentCreate,
+  FulfilmentMethod,
   Money,
+  PaymentCreate,
+  PaymentMethod,
   PaymentSummaryStatus,
+  PostageType,
   Preorder,
   PreorderStatus,
   PreorderTransitionStatus,
@@ -182,6 +187,7 @@ export function PreorderDetailPage() {
   const [result, setResult] = useState<DetailResult | null>(null)
   const [mutating, setMutating] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [panel, setPanel] = useState<'none' | 'fulfil' | 'payment'>('none')
   const actionLock = useRef(false)
 
   const retry = useCallback(() => {
@@ -209,6 +215,63 @@ export function PreorderDetailPage() {
           errorKind: null,
           message: '',
         })
+      } catch (caught: unknown) {
+        setActionError(describeActionError(caught))
+      } finally {
+        actionLock.current = false
+        setMutating(false)
+      }
+    },
+    [preorderId, tick],
+  )
+
+  const runFulfil = useCallback(
+    async (payload: FulfilmentCreate) => {
+      if (preorderId === null || actionLock.current) {
+        return
+      }
+      actionLock.current = true
+      setMutating(true)
+      setActionError(null)
+      try {
+        const data = await withTimeout(fulfilPreorder(preorderId, payload), 20000)
+        setResult({
+          id: preorderId,
+          tick,
+          preorder: data,
+          errorKind: null,
+          message: '',
+        })
+        setPanel('none')
+      } catch (caught: unknown) {
+        setActionError(describeActionError(caught))
+      } finally {
+        actionLock.current = false
+        setMutating(false)
+      }
+    },
+    [preorderId, tick],
+  )
+
+  const runPayment = useCallback(
+    async (payload: PaymentCreate) => {
+      if (preorderId === null || actionLock.current) {
+        return
+      }
+      actionLock.current = true
+      setMutating(true)
+      setActionError(null)
+      try {
+        await withTimeout(createPayment(preorderId, payload), 20000)
+        const data = await withTimeout(getPreorder(preorderId), 20000)
+        setResult({
+          id: preorderId,
+          tick,
+          preorder: data,
+          errorKind: null,
+          message: '',
+        })
+        setPanel('none')
       } catch (caught: unknown) {
         setActionError(describeActionError(caught))
       } finally {
@@ -346,9 +409,37 @@ export function PreorderDetailPage() {
       <PreorderActions
         preorder={preorder}
         busy={mutating}
-        error={actionError}
+        error={panel === 'none' ? actionError : null}
         onTransition={runTransition}
+        onOpenFulfil={() => {
+          setActionError(null)
+          setPanel(panel === 'fulfil' ? 'none' : 'fulfil')
+        }}
+        onOpenPayment={() => {
+          setActionError(null)
+          setPanel(panel === 'payment' ? 'none' : 'payment')
+        }}
       />
+
+      {panel === 'fulfil' && preorder.status === 'READY_FOR_CUSTOMER' ? (
+        <FulfilmentForm
+          busy={mutating}
+          error={actionError}
+          onCancel={() => setPanel('none')}
+          onSubmit={runFulfil}
+        />
+      ) : null}
+
+      {panel === 'payment' ? (
+        <PaymentForm
+          busy={mutating}
+          error={actionError}
+          outstanding={preorder.payment_summary.outstanding_balance}
+          priceSet={preorder.agreed_price !== null}
+          onCancel={() => setPanel('none')}
+          onSubmit={runPayment}
+        />
+      ) : null}
 
       <div className="detail-grid">
         <section className="panel">
@@ -513,6 +604,8 @@ function PreorderActions({
   busy,
   error,
   onTransition,
+  onOpenFulfil,
+  onOpenPayment,
 }: {
   preorder: Preorder
   busy: boolean
@@ -521,6 +614,8 @@ function PreorderActions({
     status: PreorderTransitionStatus,
     terminal?: 'cancel' | 'unavailable',
   ) => void
+  onOpenFulfil: () => void
+  onOpenPayment: () => void
 }) {
   const status = preorder.status
   const hint =
@@ -539,19 +634,31 @@ function PreorderActions({
                 : null
 
   const canReady = status === 'ARRIVED'
+  const canFulfil = status === 'READY_FOR_CUSTOMER'
   const canCancel =
     status === 'CONFIRMED' ||
     status === 'ORDERED_FROM_SUPPLIER' ||
     status === 'READY_FOR_CUSTOMER'
   const canUnavailable =
     status === 'CONFIRMED' || status === 'ORDERED_FROM_SUPPLIER' || status === 'ARRIVED'
-  const hasButtons = canReady || canCancel || canUnavailable
+  const canPay = true
+  const hasButtons = canReady || canFulfil || canCancel || canUnavailable || canPay
 
   return (
     <section className="panel detail-actions" aria-label="Preorder actions">
       {hint ? <p className="detail-muted">{hint}</p> : null}
       {hasButtons ? (
         <div className="detail-actions__row">
+          {canFulfil ? (
+            <button
+              type="button"
+              className="action-btn action-btn--primary"
+              disabled={busy}
+              onClick={onOpenFulfil}
+            >
+              Fulfil preorder
+            </button>
+          ) : null}
           {canReady ? (
             <button
               type="button"
@@ -560,6 +667,16 @@ function PreorderActions({
               onClick={() => onTransition('READY_FOR_CUSTOMER')}
             >
               Mark ready for customer
+            </button>
+          ) : null}
+          {canPay ? (
+            <button
+              type="button"
+              className="action-btn"
+              disabled={busy}
+              onClick={onOpenPayment}
+            >
+              Record payment
             </button>
           ) : null}
           {canCancel ? (
@@ -585,6 +702,268 @@ function PreorderActions({
         </div>
       ) : null}
       {error ? <p className="detail-action-error">{error}</p> : null}
+    </section>
+  )
+}
+
+function FulfilmentForm({
+  busy,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  busy: boolean
+  error: string | null
+  onCancel: () => void
+  onSubmit: (payload: FulfilmentCreate) => void
+}) {
+  const [method, setMethod] = useState<FulfilmentMethod>('HOME_COLLECTION')
+  const [postageType, setPostageType] = useState<PostageType>('REGULAR')
+  const [address, setAddress] = useState('')
+  const [tracking, setTracking] = useState('')
+  const [postageCost, setPostageCost] = useState('')
+  const [notes, setNotes] = useState('')
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (busy) {
+      return
+    }
+    if (method === 'HOME_COLLECTION') {
+      onSubmit({
+        method: 'HOME_COLLECTION',
+        notes: notes.trim() ? notes.trim() : null,
+      })
+      return
+    }
+    const payload: FulfilmentCreate = {
+      method: 'POST',
+      postage_type: postageType,
+      delivery_address: address.trim(),
+      notes: notes.trim() ? notes.trim() : null,
+    }
+    if (postageCost.trim()) {
+      payload.postage_cost = postageCost.trim()
+    }
+    if (postageType === 'REGISTERED') {
+      payload.tracking_reference = tracking.trim()
+    }
+    onSubmit(payload)
+  }
+
+  return (
+    <section className="panel">
+      <h2>Fulfil preorder</h2>
+      <form className="ops-form" onSubmit={handleSubmit}>
+        <label>
+          Method
+          <select
+            value={method}
+            disabled={busy}
+            onChange={(event) => setMethod(event.target.value as FulfilmentMethod)}
+          >
+            <option value="HOME_COLLECTION">Home collection</option>
+            <option value="POST">Post</option>
+          </select>
+        </label>
+        {method === 'POST' ? (
+          <>
+            <label>
+              Postage type
+              <select
+                value={postageType}
+                disabled={busy}
+                onChange={(event) => setPostageType(event.target.value as PostageType)}
+              >
+                <option value="REGULAR">Regular</option>
+                <option value="REGISTERED">Registered</option>
+              </select>
+            </label>
+            <label className="ops-form__wide">
+              Delivery address
+              <textarea
+                required
+                rows={3}
+                value={address}
+                disabled={busy}
+                onChange={(event) => setAddress(event.target.value)}
+              />
+            </label>
+            {postageType === 'REGISTERED' ? (
+              <label className="ops-form__wide">
+                Tracking reference
+                <input
+                  required
+                  value={tracking}
+                  disabled={busy}
+                  onChange={(event) => setTracking(event.target.value)}
+                />
+              </label>
+            ) : null}
+            <label>
+              Postage cost
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={postageCost}
+                disabled={busy}
+                onChange={(event) => setPostageCost(event.target.value)}
+              />
+            </label>
+          </>
+        ) : null}
+        <label className="ops-form__wide">
+          Notes
+          <textarea
+            rows={2}
+            value={notes}
+            disabled={busy}
+            onChange={(event) => setNotes(event.target.value)}
+          />
+        </label>
+        {error ? <p className="detail-action-error">{error}</p> : null}
+        <div className="detail-actions__row">
+          <button type="submit" className="action-btn action-btn--primary" disabled={busy}>
+            Confirm fulfilment
+          </button>
+          <button type="button" className="action-btn" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+function PaymentForm({
+  busy,
+  error,
+  outstanding,
+  priceSet,
+  onCancel,
+  onSubmit,
+}: {
+  busy: boolean
+  error: string | null
+  outstanding: Money | null
+  priceSet: boolean
+  onCancel: () => void
+  onSubmit: (payload: PaymentCreate) => void
+}) {
+  const [amount, setAmount] = useState('')
+  const [method, setMethod] = useState<PaymentMethod>('BANK_TRANSFER')
+  const [reference, setReference] = useState('')
+  const [paidAt, setPaidAt] = useState('')
+  const [notes, setNotes] = useState('')
+  const amountNumber = Number(amount)
+  const outstandingNumber = outstanding === null ? null : Number(outstanding)
+  const overpay =
+    priceSet &&
+    Number.isFinite(amountNumber) &&
+    outstandingNumber !== null &&
+    Number.isFinite(outstandingNumber) &&
+    amountNumber > outstandingNumber
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (busy) {
+      return
+    }
+    const payload: PaymentCreate = {
+      amount: amount.trim(),
+      method,
+    }
+    if (reference.trim()) {
+      payload.reference = reference.trim()
+    }
+    if (notes.trim()) {
+      payload.notes = notes.trim()
+    }
+    if (paidAt.trim()) {
+      const parsed = new Date(paidAt)
+      if (!Number.isNaN(parsed.getTime())) {
+        payload.paid_at = parsed.toISOString()
+      }
+    }
+    onSubmit(payload)
+  }
+
+  return (
+    <section className="panel">
+      <h2>Record payment</h2>
+      {!priceSet ? (
+        <p className="detail-muted">Set agreed price on the preorder before recording a payment.</p>
+      ) : null}
+      <form className="ops-form" onSubmit={handleSubmit}>
+        <label>
+          Amount
+          <input
+            required
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={amount}
+            disabled={busy || !priceSet}
+            onChange={(event) => setAmount(event.target.value)}
+          />
+        </label>
+        <label>
+          Method
+          <select
+            value={method}
+            disabled={busy || !priceSet}
+            onChange={(event) => setMethod(event.target.value as PaymentMethod)}
+          >
+            <option value="BANK_TRANSFER">Bank transfer</option>
+            <option value="REVOLUT">Revolut</option>
+          </select>
+        </label>
+        <label>
+          Paid at
+          <input
+            type="datetime-local"
+            value={paidAt}
+            disabled={busy || !priceSet}
+            onChange={(event) => setPaidAt(event.target.value)}
+          />
+        </label>
+        <label>
+          Reference
+          <input
+            value={reference}
+            disabled={busy || !priceSet}
+            onChange={(event) => setReference(event.target.value)}
+          />
+        </label>
+        <label className="ops-form__wide">
+          Notes
+          <textarea
+            rows={2}
+            value={notes}
+            disabled={busy || !priceSet}
+            onChange={(event) => setNotes(event.target.value)}
+          />
+        </label>
+        {overpay ? (
+          <p className="detail-muted">
+            This amount is more than the current outstanding balance. Overpayment is allowed.
+          </p>
+        ) : null}
+        {error ? <p className="detail-action-error">{error}</p> : null}
+        <div className="detail-actions__row">
+          <button
+            type="submit"
+            className="action-btn action-btn--primary"
+            disabled={busy || !priceSet}
+          >
+            Save payment
+          </button>
+          <button type="button" className="action-btn" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </form>
     </section>
   )
 }

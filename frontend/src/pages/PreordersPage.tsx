@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { getPreorders } from '../api/resources'
+import { createPreorder, getPreorders } from '../api/resources'
 import type {
   Money,
   PaymentSummaryStatus,
   Preorder,
+  PreorderCreate,
   PreorderStatus,
   Product,
 } from '../api/types'
@@ -176,6 +177,7 @@ function productMeta(product: Product | undefined): string {
 }
 
 export function PreordersPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const reference = useReferenceData()
   const [tick, setTick] = useState(0)
@@ -187,6 +189,10 @@ export function PreordersPage() {
   const [supplierFilter, setSupplierFilter] = useState('ALL')
   const [page, setPage] = useState(1)
   const [pageFilterKey, setPageFilterKey] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const createLock = useRef(false)
 
   const statusParam = searchParams.get('status')
   const workflowFilter: WorkflowFilter = isPreorderStatus(statusParam) ? statusParam : 'ALL'
@@ -297,10 +303,57 @@ export function PreordersPage() {
 
   return (
     <div className="preorders">
-      <header className="page-header">
-        <h1>Preorders</h1>
-        <p>Manage confirmed customer commitments.</p>
+      <header className="list-header">
+        <div className="page-header">
+          <h1>Preorders</h1>
+          <p>Manage confirmed customer commitments.</p>
+        </div>
+        <button
+          type="button"
+          className="action-btn action-btn--primary"
+          disabled={createBusy}
+          onClick={() => {
+            setCreateError(null)
+            setCreating((open) => !open)
+          }}
+        >
+          + New Preorder
+        </button>
       </header>
+
+      {creating ? (
+        <NewPreorderForm
+          busy={createBusy}
+          error={createError}
+          onCancel={() => {
+            setCreating(false)
+            setCreateError(null)
+          }}
+          onSubmit={async (payload) => {
+            if (createLock.current) {
+              return
+            }
+            createLock.current = true
+            setCreateBusy(true)
+            setCreateError(null)
+            try {
+              const created = await withTimeout(createPreorder(payload), 20000)
+              navigate(`/preorders/${created.id}`)
+            } catch (caught: unknown) {
+              setCreateError(
+                caught instanceof ApiError && (caught.status === 409 || caught.status === 0)
+                  ? caught.message
+                  : caught instanceof ApiError && caught.status === 422
+                    ? 'The request was not valid.'
+                    : 'This preorder could not be created.',
+              )
+            } finally {
+              createLock.current = false
+              setCreateBusy(false)
+            }
+          }}
+        />
+      ) : null}
 
       <section className="preorder-cards" aria-label="Preorder summary">
         {SUMMARY_CARDS.map((card) => {
@@ -480,5 +533,126 @@ export function PreordersPage() {
         )}
       </section>
     </div>
+  )
+}
+
+function NewPreorderForm({
+  busy,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  busy: boolean
+  error: string | null
+  onCancel: () => void
+  onSubmit: (payload: PreorderCreate) => void
+}) {
+  const reference = useReferenceData()
+  const [customerId, setCustomerId] = useState('')
+  const [productId, setProductId] = useState('')
+  const [quantity, setQuantity] = useState('1')
+  const [agreedPrice, setAgreedPrice] = useState('')
+  const [notes, setNotes] = useState('')
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (busy) {
+      return
+    }
+    const payload: PreorderCreate = {
+      customer_id: Number(customerId),
+      product_id: Number(productId),
+      quantity: Number(quantity),
+    }
+    if (agreedPrice.trim()) {
+      payload.agreed_price = agreedPrice.trim()
+    }
+    if (notes.trim()) {
+      payload.notes = notes.trim()
+    }
+    onSubmit(payload)
+  }
+
+  return (
+    <section className="panel">
+      <h2>New preorder</h2>
+      <p className="detail-muted">Creates a confirmed customer commitment.</p>
+      <form className="ops-form" onSubmit={handleSubmit}>
+        <label>
+          Customer
+          <select
+            required
+            value={customerId}
+            disabled={busy}
+            onChange={(event) => setCustomerId(event.target.value)}
+          >
+            <option value="">Select customer</option>
+            {reference.customers.map((customer) => (
+              <option key={customer.id} value={String(customer.id)}>
+                {customer.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Product
+          <select
+            required
+            value={productId}
+            disabled={busy}
+            onChange={(event) => setProductId(event.target.value)}
+          >
+            <option value="">Select product</option>
+            {reference.products.map((product) => (
+              <option key={product.id} value={String(product.id)}>
+                {product.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Quantity
+          <input
+            required
+            type="number"
+            min="1"
+            step="1"
+            value={quantity}
+            disabled={busy}
+            onChange={(event) => setQuantity(event.target.value)}
+          />
+        </label>
+        <label>
+          Agreed price
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={agreedPrice}
+            disabled={busy}
+            onChange={(event) => setAgreedPrice(event.target.value)}
+            placeholder="Uses product selling price if blank"
+          />
+        </label>
+        <label className="ops-form__wide">
+          Notes
+          <textarea
+            rows={2}
+            value={notes}
+            disabled={busy}
+            onChange={(event) => setNotes(event.target.value)}
+          />
+        </label>
+        {error ? <p className="detail-action-error">{error}</p> : null}
+        <div className="detail-actions__row">
+          <button type="submit" className="action-btn action-btn--primary" disabled={busy}>
+            Create preorder
+          </button>
+          <button type="button" className="action-btn" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </section>
   )
 }

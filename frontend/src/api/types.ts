@@ -22,6 +22,32 @@ export type PreorderTransitionStatus = Exclude<PreorderStatus, 'FULFILLED'>
 
 export type PaymentMethod = 'BANK_TRANSFER' | 'REVOLUT'
 
+export type FulfilmentCreate = {
+  method: FulfilmentMethod
+  postage_type?: PostageType | null
+  delivery_address?: string | null
+  postage_cost?: Money | null
+  tracking_reference?: string | null
+  notes?: string | null
+}
+
+export type PaymentCreate = {
+  amount: Money
+  method: PaymentMethod
+  reference?: string | null
+  paid_at?: string | null
+  notes?: string | null
+}
+
+export type PreorderCreate = {
+  customer_id: number
+  product_id: number
+  enquiry_id?: number | null
+  quantity?: number
+  agreed_price?: Money | null
+  notes?: string | null
+}
+
 export type PaymentSummaryStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'OVERPAID'
 
 export type FulfilmentMethod = 'HOME_COLLECTION' | 'POST'

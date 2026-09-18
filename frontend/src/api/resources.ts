@@ -6,10 +6,13 @@ import type {
   DemandAnalyticsParams,
   Enquiry,
   EnquiryListParams,
+  FulfilmentCreate,
   HealthResponse,
   InventoryLot,
   Payment,
+  PaymentCreate,
   Preorder,
+  PreorderCreate,
   PreorderListParams,
   PreorderTransitionStatus,
   Product,
@@ -83,6 +86,24 @@ export function transitionPreorder(
   status: PreorderTransitionStatus,
 ): Promise<Preorder> {
   return apiPost<Preorder>(`/api/v1/preorders/${preorderId}/transitions`, { status })
+}
+
+export function createPreorder(payload: PreorderCreate): Promise<Preorder> {
+  return apiPost<Preorder>('/api/v1/preorders', payload)
+}
+
+export function fulfilPreorder(
+  preorderId: number,
+  payload: FulfilmentCreate,
+): Promise<Preorder> {
+  return apiPost<Preorder>(`/api/v1/preorders/${preorderId}/fulfil`, payload)
+}
+
+export function createPayment(
+  preorderId: number,
+  payload: PaymentCreate,
+): Promise<Payment> {
+  return apiPost<Payment>(`/api/v1/preorders/${preorderId}/payments`, payload)
 }
 
 export function getPayments(preorderId: number): Promise<Payment[]> {
