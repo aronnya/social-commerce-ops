@@ -1511,3 +1511,92 @@ button {
 .data-table--inventory {
   min-width: 54rem;
 }
+
+.content__inner:has(.insights) {
+  max-width: 1280px;
+}
+
+.insight-range {
+  align-items: end;
+}
+
+.insight-range__actions {
+  grid-column: 1 / -1;
+}
+
+.insight-rate-card .dash-card__count {
+  font-size: 1.45rem;
+}
+
+.insights .enquiry-cards {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.insight-bars {
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.insight-bar {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr) 2.4rem;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.insight-bar__label,
+.insight-bar__count {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.insight-bar__count {
+  text-align: right;
+}
+
+.insight-bar__track {
+  display: block;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: #eef1f4;
+  overflow: hidden;
+}
+
+.insight-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #e4c9c9;
+}
+
+.insight-bar.is-muted {
+  color: var(--color-text-muted);
+}
+
+.data-table--insights {
+  min-width: 48rem;
+}
+
+@media (max-width: 1180px) {
+  .insights .enquiry-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .insights .enquiry-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .insight-bar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .insight-bar__track {
+    grid-column: 1 / -1;
+  }
+}
