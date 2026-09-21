@@ -6,7 +6,7 @@ This document is the living explanation of how the system is built. It is writte
 
 Every major screen should help the user perform or understand an operational task. The platform should not become CRUD for its own sake. Data storage supports workflows, automation, exception handling and decision-making.
 
-REST list/create/update endpoints will exist because the workflow needs records. They are not the product. The valuable behaviour is coordinating preorders, supplier orders, payments, inventory, exceptions, and (later) demand decisions.
+REST list/create/update endpoints exist because the workflow needs records. They are not the product. The valuable behaviour is coordinating preorders, supplier orders, payments, inventory, exceptions, and demand decisions.
 
 ## High-level architecture
 
@@ -33,7 +33,7 @@ Reasons:
 
 We are **not** using microservices, Kubernetes, Kafka, Redis, GraphQL, or Docker. Those would add moving parts without solving a current problem.
 
-The API and UI run on the host machine so logs and breakpoints stay simple. PostgreSQL is a hosted instance (for example Supabase), configured with `DATABASE_URL`. Do not put that URL in git.
+The API and UI run on the host machine so logs and breakpoints stay simple. PostgreSQL is configured with `DATABASE_URL` (local or hosted). Do not put that URL in git.
 
 ## Folder structure
 
@@ -49,15 +49,17 @@ social-commerce-ops/
       main.py          # FastAPI application
       core/config.py   # settings from environment variables
       core/db.py       # SQLAlchemy engine, session, Base
-      models.py        # Supplier, Product (catalogue), Customer
+      models.py        # SQLAlchemy entities (catalogue through fulfilment)
       schemas.py       # Pydantic request/response shapes
       services.py      # database operations and rules
       api.py           # /api/v1 HTTP routes
-    alembic/           # database migrations
+    alembic/           # database migrations 0001–0007
+    scripts/           # synthetic demo seeder (guarded; not an API)
     tests/
     requirements.txt
     alembic.ini
   frontend/            # Vite + React + TypeScript
+  docs/screenshots/    # README captures (synthetic demo)
 ```
 
 Keep models/schemas/services in a few modules for now. Split into packages later if the files get hard to read.
@@ -102,9 +104,9 @@ Why supplier-order status is separate: one supplier shipment can cover many cust
 
 Why fulfilment is not a preorder column dump: method, postage, address, and tracking are operational facts about the handoff, like payment rows. `READY_FOR_CUSTOMER` → `FULFILLED` is owned by `fulfil_preorder`, the same way placement owns `ORDERED_FROM_SUPPLIER` and reconciliation owns `ARRIVED`. Generic transitions cannot set `FULFILLED`. Payment state does not gate fulfilment. v1 records are immutable (no update/delete). An Post, live tracking, labels, ETAs, and extra shipping statuses are deferred.
 
-## Operational behaviours (how the domain should work)
+## Operational behaviours
 
-These behaviours are the point of the architecture. They will be added milestone by milestone, not all in the first database slice.
+These behaviours are implemented in `services.py` and exposed as read/write HTTP operations. The frontend calls those operations; it does not invent parallel state machines.
 
 ### Action / attention queue
 
@@ -155,13 +157,13 @@ When a supplier order arrives, the owner reconciles ordered quantity vs received
 
 ### Inventory consequences
 
-Catalogue `products` and `inventory_lots` stay different tables. Rules:
+Catalogue `products` and `inventory_lots` stay different tables. In v1:
 
-- receiving a stock purchase increases physical inventory
-- selling or allocating physical stock reduces available inventory
-- refuse allocations that exceed what is available
+- unassigned remainder after supplier-order reconciliation creates `InventoryLot` rows
+- `GET /api/v1/inventory` is read-only
+- consuming lots for local-stock sales, extra receipts, and allocation-from-inventory are deferred
 
-Preorder fulfilment from a Pakistan shipment and fulfilment from local stock are both valid paths; only the local-stock path consumes inventory lots.
+Preorder fulfilment from a Pakistan shipment does not decrement inventory lots. The local-stock consumption path is specified, not built.
 
 ### Workflow / business-rule enforcement
 
@@ -174,7 +176,7 @@ Invalid operations should fail in the backend (clear HTTP errors), including:
 
 ### Event / history tracking
 
-A `workflow_events` (or similarly named) history can be added when those operations exist. Examples of events: enquiry created, preorder confirmed, payment recorded, supplier order placed, supplier order dispatched, item arrived, customer notified, fulfilled. That trail later supports operational metrics (for example average time from confirmed to fulfilled). It is not required before the first CRUD tables exist.
+A `workflow_events` (or similarly named) history can still be added. Examples: enquiry created, preorder confirmed, payment recorded, supplier order placed, item arrived, fulfilled. It is not required for v1 operations.
 
 ### Demand intelligence
 
@@ -184,32 +186,30 @@ Product and supplier rows are raw aggregates (enquiry count, requested quantity,
 
 No revenue/cash/margin, no timing/SLA metrics, no scoring, no high-interest flag, no ML. `GET /api/v1/analytics/demand` is read-only. Optional `from`/`to` query params are timezone-aware and filter `Enquiry.enquired_at` as `[from, to)`.
 
-## Planned REST API
+## REST API
 
 Version prefix: `/api/v1`.
 
-Resource endpoints will exist for the entities above. In addition, the API should grow **operations** that encode the workflow:
+Resource endpoints exist for the entities above. Workflow is encoded as **operations**, not free-form status edits:
 
-| Area | Endpoints (planned) |
+| Area | Endpoints |
 | --- | --- |
-| Health | `GET /health` |
+| Health | `GET /health` (API process; not database connectivity) |
 | Suppliers | `GET/POST /api/v1/suppliers`, `GET/PATCH/DELETE /api/v1/suppliers/{id}` |
 | Products | `GET/POST /api/v1/products`, `GET/PATCH/DELETE /api/v1/products/{id}` (`?supplier_id=` filter) |
 | Customers | `GET/POST /api/v1/customers`, `GET/PATCH/DELETE /api/v1/customers/{id}` |
 | Enquiries | `GET/POST /api/v1/enquiries`, `PATCH` for outcome |
 | Preorders | `GET/POST /api/v1/preorders`, `POST /api/v1/preorders/{id}/transitions`, `POST /api/v1/preorders/{id}/fulfil` (`FULFILLED` is not a generic transition) |
 | Payments | `GET/POST /api/v1/preorders/{id}/payments` (status is derived, not PATCHed independently) |
-| Supplier orders | generate draft from confirmed preorders; lines; transitions; reconcile received quantities |
-| Inventory | list, receive, allocate (with availability checks) |
-| Attention | `GET /api/v1/attention` (or similar) — derived queue |
+| Supplier orders | generate draft; place; transitions; reconcile received quantities |
+| Inventory | `GET /api/v1/inventory` (read-only in v1) |
+| Attention | `GET /api/v1/attention` — derived queue |
 | Analytics | `GET /api/v1/analytics/demand` — derived enquiry conversion, lost demand, product/supplier demand, all-time recon snapshot |
 | Events | later: list history for an entity |
 
-Preorder status is **not** a free-form `PATCH`. A dedicated transition endpoint will check an allow-list of next states. The same idea applies to supplier-order status.
+Preorder status is **not** a free-form `PATCH`. A dedicated transition endpoint checks an allow-list of next states. The same idea applies to supplier-order status. Messaging webhooks and PDF export are out of the core API.
 
-Exact paths can be chosen when those milestones are built. Do not add messaging webhooks or PDF export in the core API.
-
-## Request / data flow (once features exist)
+## Request / data flow
 
 1. Owner records a catalogue product from a supplier photo (catalogue, not inventory).
 2. A customer enquiry is stored against that product (outcome may still be unknown).
@@ -217,10 +217,10 @@ Exact paths can be chosen when those milestones are built. Do not add messaging 
 4. Payments are recorded as they arrive; paid / outstanding / payment status are derived.
 5. The owner generates a draft supplier order from confirmed preorders for that supplier, reviews quantities, then marks it `PLACED`.
 6. On arrival, the owner reconciles received vs ordered quantities; received items update preorders and/or inventory.
-7. Ready items wait in the attention queue until the owner records fulfilment: home collection, or post (`REGULAR` / `REGISTERED`, address snapshot, optional postage cost, registered tracking required). That operation sets `FULFILLED`. Inventory-backed sales decrement available stock (deferred).
-8. Analytics queries group enquiries and preorders in SQL.
+7. Ready items wait in the attention queue until the owner records fulfilment: home collection, or post (`REGULAR` / `REGISTERED`, address snapshot, optional postage cost, registered tracking required). That operation sets `FULFILLED`.
+8. Analytics queries group enquiries and preorders in SQL. Conversion uses the preorder link.
 
-## State models (planned)
+## State models
 
 ### Preorder
 
@@ -263,9 +263,9 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 | Derived payment status | Totals cannot disagree with payment rows | Must recompute when payments change |
 | Operations in services | Rules stay testable and UI-independent | A bit more structure than “update the row” |
 | Derived attention queue | Cannot drift from real state | Queries must stay cheap and clear |
-| Hosted Postgres (e.g. Supabase) | No local database install or Docker | Needs `DATABASE_URL` in `.env`; tests need a separate `TEST_DATABASE_URL` |
+| PostgreSQL (not SQLite) | Same engine in development and tests | Needs `DATABASE_URL` / `TEST_DATABASE_URL` |
 | No Redis | No caching/queue requirement yet | Fine at this scale |
-| Minimal UI until Figma | Avoid throwing away a fake dashboard | Early screens will look plain on purpose |
+| Operations UI over generic admin | Screens match the workflow | Not a public storefront |
 
 ## Known limitations (now)
 
@@ -276,20 +276,20 @@ Store amounts as decimals, not floats. Likely two currencies in real life (suppl
 - Attention queue is derived (no table); `GET /api/v1/attention` is read-only. `OVERPAID` items can stick until refunds exist.
 - Catalogue products are not inventory; unassigned owned stock lives on `InventoryLot`, not on `Product`
 - No An Post integration, live tracking, labels, postage price list, or extra shipping statuses. Fulfilment rows are immutable in v1 (no PATCH/DELETE).
-- Frontend still only checks that the API health endpoint responds
+- Sidebar health copy reflects API reachability (`GET /health`), not database connectivity.
 
-## Milestone 2 notes
+## Catalogue milestone notes
 
-Implemented:
+Implemented early:
 
 - SQLAlchemy 2.0 engine/session (`app/core/db.py`)
-- Alembic migration `0001_catalogue_core` (suppliers, products, customers)
+- Alembic from `0001_catalogue_core` through `0007_preorder_fulfilments`
 - Integer primary keys (simple to explain; good enough at this scale)
 - `products.supplier_id` foreign key; cannot delete a supplier that still has products
 - Pydantic validation on write; service layer owns those rules
-- pytest for health always; CRUD tests when `TEST_DATABASE_URL` is set
+- pytest for health always; database tests when `TEST_DATABASE_URL` is set
 
-Not implemented: preorders, payments, workflow operations.
+Later milestones added enquiries, preorders, payments, supplier orders, reconciliation, inventory lots, fulfilment, attention, demand analytics, and the React operations UI. See the root README for the recruiter-facing summary.
 
 ## Future improvements (explicitly not MVP / not core dependencies)
 
