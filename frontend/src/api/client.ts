@@ -75,6 +75,10 @@ export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>(path, { method: 'POST', body: JSON.stringify(body) })
 }
 
+export function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return apiRequest<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
 export function withQuery(
   path: string,
   params: Record<string, string | number | boolean | undefined>,

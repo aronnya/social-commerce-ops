@@ -150,6 +150,20 @@ export type Enquiry = {
   updated_at: string
 }
 
+export type EnquiryCreate = {
+  customer_id: number
+  product_id: number
+  quantity?: number
+  notes?: string | null
+}
+
+export type EnquiryUpdate = {
+  quantity?: number
+  outcome?: EnquiryOutcome | null
+  notes?: string | null
+  enquired_at?: string | null
+}
+
 export type PaymentSummary = {
   total_amount: Money | null
   amount_paid: Money

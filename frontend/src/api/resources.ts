@@ -1,11 +1,13 @@
-import { apiGet, apiPost, withQuery } from './client'
+import { apiGet, apiPatch, apiPost, withQuery } from './client'
 import type {
   AttentionQueue,
   Customer,
   DemandAnalytics,
   DemandAnalyticsParams,
   Enquiry,
+  EnquiryCreate,
   EnquiryListParams,
+  EnquiryUpdate,
   FulfilmentCreate,
   HealthResponse,
   InventoryLot,
@@ -67,6 +69,14 @@ export function getEnquiries(params: EnquiryListParams = {}): Promise<Enquiry[]>
 
 export function getEnquiry(enquiryId: number): Promise<Enquiry> {
   return apiGet<Enquiry>(`/api/v1/enquiries/${enquiryId}`)
+}
+
+export function createEnquiry(payload: EnquiryCreate): Promise<Enquiry> {
+  return apiPost<Enquiry>('/api/v1/enquiries', payload)
+}
+
+export function updateEnquiry(enquiryId: number, payload: EnquiryUpdate): Promise<Enquiry> {
+  return apiPatch<Enquiry>(`/api/v1/enquiries/${enquiryId}`, payload)
 }
 
 export function getPreorders(params: PreorderListParams = {}): Promise<Preorder[]> {

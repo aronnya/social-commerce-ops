@@ -1472,3 +1472,30 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.content__inner:has(.enquiries) {
+  max-width: 1280px;
+}
+
+.enquiry-cards {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.data-table--enquiries {
+  min-width: 62rem;
+}
+
+.cell-notes {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 16rem;
+  white-space: normal;
+}
+
+@media (max-width: 1180px) {
+  .enquiry-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
