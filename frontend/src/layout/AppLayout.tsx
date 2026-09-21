@@ -30,10 +30,10 @@ export function AppLayout() {
 
   const healthLabel =
     health === 'checking'
-      ? 'Checking backend…'
+      ? 'Checking API…'
       : health === 'ok'
-        ? 'Backend connected'
-        : 'Backend unavailable'
+        ? 'API connected'
+        : 'API unavailable'
 
   return (
     <div className="app-shell">
