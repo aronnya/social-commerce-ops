@@ -2,6 +2,8 @@ import { apiGet, apiPatch, apiPost, withQuery } from './client'
 import type {
   AttentionQueue,
   Customer,
+  CustomerCreate,
+  CustomerUpdate,
   DemandAnalytics,
   DemandAnalyticsParams,
   Enquiry,
@@ -18,7 +20,10 @@ import type {
   PreorderListParams,
   PreorderTransitionStatus,
   Product,
+  ProductCreate,
+  ProductUpdate,
   Supplier,
+  SupplierCreate,
   SupplierOrder,
   SupplierOrderGenerateDraft,
   SupplierOrderListParams,
@@ -38,6 +43,10 @@ export function getSupplier(supplierId: number): Promise<Supplier> {
   return apiGet<Supplier>(`/api/v1/suppliers/${supplierId}`)
 }
 
+export function createSupplier(payload: SupplierCreate): Promise<Supplier> {
+  return apiPost<Supplier>('/api/v1/suppliers', payload)
+}
+
 export function getProducts(supplierId?: number): Promise<Product[]> {
   return apiGet<Product[]>(
     withQuery('/api/v1/products', { supplier_id: supplierId }),
@@ -48,12 +57,28 @@ export function getProduct(productId: number): Promise<Product> {
   return apiGet<Product>(`/api/v1/products/${productId}`)
 }
 
+export function createProduct(payload: ProductCreate): Promise<Product> {
+  return apiPost<Product>('/api/v1/products', payload)
+}
+
+export function updateProduct(productId: number, payload: ProductUpdate): Promise<Product> {
+  return apiPatch<Product>(`/api/v1/products/${productId}`, payload)
+}
+
 export function getCustomers(): Promise<Customer[]> {
   return apiGet<Customer[]>('/api/v1/customers')
 }
 
 export function getCustomer(customerId: number): Promise<Customer> {
   return apiGet<Customer>(`/api/v1/customers/${customerId}`)
+}
+
+export function createCustomer(payload: CustomerCreate): Promise<Customer> {
+  return apiPost<Customer>('/api/v1/customers', payload)
+}
+
+export function updateCustomer(customerId: number, payload: CustomerUpdate): Promise<Customer> {
+  return apiPatch<Customer>(`/api/v1/customers/${customerId}`, payload)
 }
 
 export function getEnquiries(params: EnquiryListParams = {}): Promise<Enquiry[]> {

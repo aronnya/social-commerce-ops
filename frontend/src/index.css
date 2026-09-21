@@ -1499,3 +1499,15 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.content__inner:has(.catalogue),
+.content__inner:has(.customers),
+.content__inner:has(.inventory) {
+  max-width: 1280px;
+}
+
+.data-table--catalogue,
+.data-table--customers,
+.data-table--inventory {
+  min-width: 54rem;
+}

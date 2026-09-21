@@ -113,6 +113,15 @@ export type Supplier = {
   updated_at: string
 }
 
+export type SupplierCreate = {
+  name: string
+  contact_name?: string | null
+  phone?: string | null
+  whatsapp?: string | null
+  email?: string | null
+  notes?: string | null
+}
+
 export type Product = {
   id: number
   supplier_id: number
@@ -128,6 +137,30 @@ export type Product = {
   updated_at: string
 }
 
+export type ProductCreate = {
+  supplier_id: number
+  name: string
+  description?: string | null
+  style?: string | null
+  colour?: string | null
+  size?: string | null
+  supplier_cost?: Money | null
+  selling_price?: Money | null
+  notes?: string | null
+}
+
+export type ProductUpdate = {
+  supplier_id?: number
+  name?: string
+  description?: string | null
+  style?: string | null
+  colour?: string | null
+  size?: string | null
+  supplier_cost?: Money | null
+  selling_price?: Money | null
+  notes?: string | null
+}
+
 export type Customer = {
   id: number
   name: string
@@ -136,6 +169,20 @@ export type Customer = {
   notes: string | null
   created_at: string
   updated_at: string
+}
+
+export type CustomerCreate = {
+  name: string
+  phone?: string | null
+  facebook_name?: string | null
+  notes?: string | null
+}
+
+export type CustomerUpdate = {
+  name?: string
+  phone?: string | null
+  facebook_name?: string | null
+  notes?: string | null
 }
 
 export type Enquiry = {
