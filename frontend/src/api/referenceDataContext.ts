@@ -22,6 +22,9 @@ export const ReferenceDataContext = createContext<ReferenceDataValue | null>(nul
 
 export function toIdMap<T extends { id: number }>(rows: T[]): IdMap<T> {
   const mapped: IdMap<T> = {}
+  if (!Array.isArray(rows)) {
+    return mapped
+  }
   for (const row of rows) {
     mapped[row.id] = row
   }

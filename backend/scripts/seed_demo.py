@@ -6,7 +6,8 @@ Safety:
   must contain "demo" or "test".
 
 Repeatability:
-  Pass --reset to wipe application tables on that guarded database, then seed.
+  Pass --reset to TRUNCATE application tables with RESTART IDENTITY, then seed.
+  Alembic revision is left intact.
 
 This script does not modify application workflows. It only calls existing
 service operations.
@@ -25,7 +26,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from sqlalchemy import create_engine, delete
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import normalize_database_url
@@ -63,6 +64,58 @@ from scripts.demo_safety import UnsafeDemoTargetError, assert_demo_seed_allowed
 DEMO_MARKER = "SYNTHETIC DEMO — fictional recruiter dataset"
 UTC = timezone.utc
 
+# Display names used on operational screens. Keep these fictional and specific
+# so lists never fall back to "Customer #1" / "Product #1" style labels when
+# reference data loads from this dataset.
+DEMO_SUPPLIERS = (
+    {
+        "name": "Crescent Textiles",
+        "contact_name": "Amira Shah",
+        "email": "crescent.desk@example.test",
+    },
+    {
+        "name": "Noor Fashion Supply",
+        "contact_name": "Bilal Hussain",
+        "email": "noor.desk@example.test",
+    },
+    {
+        "name": "Sapphire Wholesale",
+        "contact_name": "Ciara Flynn",
+        "email": "sapphire.desk@example.test",
+    },
+)
+
+# Truncated on --reset. RESTART IDENTITY rewinds serials so a second seed is
+# not Customer #22 / Preorder #29.
+APPLICATION_TABLES = (
+    "fulfilments",
+    "inventory_lots",
+    "supplier_order_allocations",
+    "supplier_order_lines",
+    "supplier_orders",
+    "payments",
+    "preorders",
+    "enquiries",
+    "products",
+    "customers",
+    "suppliers",
+)
+
+DEMO_CUSTOMERS = (
+    {"name": "Aisha Rahman", "facebook_name": "Aisha Rahman", "phone": "00000 000001"},
+    {"name": "Sara Malik", "facebook_name": "Sara Malik", "phone": "00000 000002"},
+    {"name": "Emma Walsh", "facebook_name": "Emma Walsh", "phone": "00000 000003"},
+    {"name": "Nadia Hassan", "facebook_name": "Nadia Hassan", "phone": "00000 000004"},
+    {"name": "Lina Costa", "facebook_name": "Lina Costa", "phone": "00000 000005"},
+    {"name": "Hannah Byrne", "facebook_name": "Hannah Byrne", "phone": "00000 000006"},
+    {"name": "Yasmin Qureshi", "facebook_name": "Yasmin Qureshi", "phone": "00000 000007"},
+    {"name": "Priya Nair", "facebook_name": "Priya Nair", "phone": "00000 000008"},
+    {"name": "Chloe Brennan", "facebook_name": "Chloe Brennan", "phone": "00000 000009"},
+    {"name": "Fatima Ali", "facebook_name": "Fatima Ali", "phone": "00000 000010"},
+    {"name": "Maya Keane", "facebook_name": "Maya Keane", "phone": "00000 000011"},
+    {"name": "Olivia Brogan", "facebook_name": "Olivia Brogan", "phone": "00000 000012"},
+)
+
 
 def _dt(days_ago: int, hour: int = 10) -> datetime:
     now = datetime(2026, 9, 1, hour, 0, tzinfo=UTC)
@@ -70,20 +123,8 @@ def _dt(days_ago: int, hour: int = 10) -> datetime:
 
 
 def _wipe_application_tables(db: Session) -> None:
-    for model in (
-        Fulfilment,
-        InventoryLot,
-        SupplierOrderAllocation,
-        SupplierOrderLine,
-        SupplierOrder,
-        Payment,
-        Preorder,
-        Enquiry,
-        Product,
-        Customer,
-        Supplier,
-    ):
-        db.execute(delete(model))
+    quoted = ", ".join(APPLICATION_TABLES)
+    db.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
     db.commit()
 
 
@@ -186,30 +227,15 @@ def seed_demo_data(db: Session) -> dict[str, int]:
     """Insert the synthetic dataset using domain operations. Caller owns wipe."""
     crescent = services.create_supplier(
         db,
-        SupplierCreate(
-            name="Crescent Textiles",
-            contact_name="Demo Buyer Desk",
-            email="crescent.demo@example.test",
-            notes=DEMO_MARKER,
-        ),
+        SupplierCreate(**DEMO_SUPPLIERS[0], notes=DEMO_MARKER),
     )
     noor = services.create_supplier(
         db,
-        SupplierCreate(
-            name="Noor Fashion Supply",
-            contact_name="Demo Merchandiser",
-            email="noor.demo@example.test",
-            notes=DEMO_MARKER,
-        ),
+        SupplierCreate(**DEMO_SUPPLIERS[1], notes=DEMO_MARKER),
     )
     sapphire = services.create_supplier(
         db,
-        SupplierCreate(
-            name="Sapphire Wholesale",
-            contact_name="Demo Wholesale Desk",
-            email="sapphire.demo@example.test",
-            notes=DEMO_MARKER,
-        ),
+        SupplierCreate(**DEMO_SUPPLIERS[2], notes=DEMO_MARKER),
     )
 
     def product(
@@ -226,7 +252,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
             ProductCreate(
                 supplier_id=supplier_id,
                 name=name,
-                description="Fictional catalogue sample for screenshots.",
+                description=f"{name} — fictional catalogue sample.",
                 style=style,
                 colour=colour,
                 size=size,
@@ -247,30 +273,17 @@ def seed_demo_data(db: Session) -> dict[str, int]:
     cardigan = product(sapphire.id, "Cream Knit Cardigan", "Cardigan", "Cream", "L", "32.00", "70.00")
     chambray = product(sapphire.id, "Sky Chambray Shirt", "Shirt", "Sky", "M", "24.00", "52.00")
 
-    names = [
-        "Aisha Demo",
-        "Sara Example",
-        "Emma Sample",
-        "Nadia Test",
-        "Lina Mock",
-        "Hannah Placeholder",
-        "Yasmin Synthetic",
-        "Priya Sample",
-        "Chloe Demo",
-        "Fatima Example",
-        "Maya Fixture",
-        "Olivia Sandbox",
-    ]
     customers = [
         services.create_customer(
             db,
             CustomerCreate(
-                name=name,
-                facebook_name=f"{name.split()[0]} Demo FB",
+                name=row["name"],
+                facebook_name=row["facebook_name"],
+                phone=row["phone"],
                 notes=DEMO_MARKER,
             ),
         )
-        for name in names
+        for row in DEMO_CUSTOMERS
     ]
     (
         aisha,
@@ -308,7 +321,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
 
     enq_draft = _enquiry(db, sara.id, maxi.id, days_ago=17)
     po_draft = _preorder_from_enquiry(db, enq_draft)
-    _pay(db, po_draft.id, "40.00", reference="DEMO-PARTIAL")
+    _pay(db, po_draft.id, "40.00", reference="BT-4401")
 
     enq_placed = _enquiry(db, emma.id, shirt.id, days_ago=16)
     po_placed = _preorder_from_enquiry(db, enq_placed)
@@ -324,15 +337,15 @@ def seed_demo_data(db: Session) -> dict[str, int]:
 
     enq_home = _enquiry(db, yasmin.id, kameez.id, days_ago=20)
     po_home = _preorder_from_enquiry(db, enq_home)
-    _pay(db, po_home.id, "120.00", method="REVOLUT", reference="DEMO-PAID")
+    _pay(db, po_home.id, "120.00", method="REVOLUT", reference="RV-1201")
 
     enq_regular = _enquiry(db, priya.id, blazer.id, days_ago=19)
     po_regular = _preorder_from_enquiry(db, enq_regular)
-    _pay(db, po_regular.id, "88.00", reference="DEMO-POST")
+    _pay(db, po_regular.id, "88.00", reference="BT-8801")
 
     enq_registered = _enquiry(db, chloe.id, cardigan.id, days_ago=19)
     po_registered = _preorder_from_enquiry(db, enq_registered)
-    _pay(db, po_registered.id, "90.00", reference="DEMO-OVERPAY")
+    _pay(db, po_registered.id, "70.00", reference="BT-7001")
 
     enq_excess_a = _enquiry(db, fatima.id, coral.id, quantity=2, days_ago=21)
     po_excess_a = _preorder_from_enquiry(db, enq_excess_a)
@@ -364,7 +377,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
             customer_id=olivia.id,
             product_id=shirt.id,
             quantity=1,
-            notes=f"{DEMO_MARKER} walk-in, no enquiry",
+            notes=f"{DEMO_MARKER} · walk-in for Olivia Brogan, Ivory Cotton Shirt",
         ),
     )
 
@@ -398,7 +411,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
         FulfilmentCreate(
             method="POST",
             postage_type="REGULAR",
-            delivery_address="12 Example Street, Dublin, D02 DEMO",
+            delivery_address="14 Willow Lane, Galway, H91 0000",
             postage_cost=Decimal("4.50"),
             notes=DEMO_MARKER,
         ),
@@ -421,7 +434,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
         FulfilmentCreate(
             method="POST",
             postage_type="REGISTERED",
-            delivery_address="8 Sample Avenue, Cork, T12 DEMO",
+            delivery_address="8 Harbour Walk, Cork, T12 0000",
             postage_cost=Decimal("8.00"),
             tracking_reference="DEMO-REG-1001",
             notes=DEMO_MARKER,

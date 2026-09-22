@@ -188,19 +188,23 @@ Completing the real operation removes the item. No separate task table.
 
 ## Screenshots
 
-Screenshots will be added from the synthetic demo dataset.
+Captured from the synthetic demo dataset.
 
-### Dashboard
+### Dashboard — attention queue and demand snapshot
 
-### Preorders
+![Dashboard — attention queue and demand snapshot](docs/screenshots/dashboard.png)
 
-### Supplier Orders & Reconciliation
+### Preorders — customer commitments, payment state, and supplier workflow
 
-### Enquiries
+![Preorders — customer commitments, payment state, and supplier workflow](docs/screenshots/preorders.png)
 
-### Catalogue & Inventory
+### Supplier Orders — consolidated purchasing and reconciliation lifecycle
 
-### Demand Insights
+![Supplier Orders — consolidated purchasing and reconciliation lifecycle](docs/screenshots/supplier-orders.png)
+
+### Insights — conversion and lost-demand analytics
+
+![Insights — conversion and lost-demand analytics](docs/screenshots/insights.png)
 
 ## Running Locally
 

@@ -4,6 +4,39 @@ import { getCustomers, getProducts, getSuppliers } from './resources'
 import { ReferenceDataContext, toIdMap, type ReferenceDataValue } from './referenceDataContext'
 import type { Customer, Product, Supplier } from './types'
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new ApiError('The request timed out.', 0))
+    }, ms)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (caught: unknown) => {
+        window.clearTimeout(timer)
+        reject(caught)
+      },
+    )
+  })
+}
+
+function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
+  return result.status === 'fulfilled' ? result.value : fallback
+}
+
+function settledError(result: PromiseSettledResult<unknown>): string | null {
+  if (result.status !== 'rejected') {
+    return null
+  }
+  const reason = result.reason
+  if (reason instanceof ApiError) {
+    return reason.message
+  }
+  return 'Reference data could not be loaded.'
+}
+
 export function ReferenceDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -20,29 +53,23 @@ export function ReferenceDataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([getSuppliers(), getProducts(), getCustomers()])
-      .then(([nextSuppliers, nextProducts, nextCustomers]) => {
-        if (cancelled) {
-          return
-        }
-        setSuppliers(nextSuppliers)
-        setProducts(nextProducts)
-        setCustomers(nextCustomers)
-        setError(null)
-      })
-      .catch((caught: unknown) => {
-        if (cancelled) {
-          return
-        }
-        const message =
-          caught instanceof ApiError ? caught.message : 'Reference data could not be loaded.'
-        setError(message)
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      })
+    Promise.allSettled([
+      withTimeout(getSuppliers(), 20000),
+      withTimeout(getProducts(), 20000),
+      withTimeout(getCustomers(), 20000),
+    ]).then(([nextSuppliers, nextProducts, nextCustomers]) => {
+      if (cancelled) {
+        return
+      }
+      setSuppliers(settledValue(nextSuppliers, []))
+      setProducts(settledValue(nextProducts, []))
+      setCustomers(settledValue(nextCustomers, []))
+      const failures = [nextSuppliers, nextProducts, nextCustomers]
+        .map(settledError)
+        .filter((message): message is string => Boolean(message))
+      setError(failures.length === 3 ? failures[0] : null)
+      setLoading(false)
+    })
     return () => {
       cancelled = true
     }

@@ -165,6 +165,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 export function DashboardPage() {
+  const {
+    loading: referenceLoading,
+    error: referenceError,
+    refresh: refreshReference,
+  } = useReferenceData()
   const [attentionTick, setAttentionTick] = useState(0)
   const [demandTick, setDemandTick] = useState(0)
   const [attention, setAttention] = useState<LoadState<AttentionQueue>>({
@@ -181,7 +186,8 @@ export function DashboardPage() {
   const retryAttention = useCallback(() => {
     setAttention({ data: null, loading: true, error: null })
     setAttentionTick((value) => value + 1)
-  }, [])
+    refreshReference()
+  }, [refreshReference])
 
   const retryDemand = useCallback(() => {
     setDemand({ data: null, loading: true, error: null })
@@ -253,12 +259,12 @@ export function DashboardPage() {
             <p>Work that needs action, ordered by priority.</p>
           </header>
           <div className="panel__body panel__body--queue">
-            {attention.loading ? (
+            {attention.loading || referenceLoading ? (
               <LoadingState message="Loading attention items…" />
-            ) : attention.error ? (
+            ) : attention.error || referenceError ? (
               <ErrorState
                 title="Attention could not be loaded"
-                message={attention.error}
+                message={attention.error ?? referenceError ?? 'Unable to load.'}
                 onRetry={retryAttention}
               />
             ) : attention.data && attention.data.items.length === 0 ? (
@@ -329,13 +335,13 @@ export function DashboardPage() {
 }
 
 function QueueRow({ item }: { item: AttentionItem }) {
-  const { customerName, productName, supplierName } = useReferenceData()
+  const { customerById, productById, supplierById } = useReferenceData()
   const copy = ATTENTION_COPY[item.type]
   const to = item.entity_type === 'supplier_order' ? '/supplier-orders' : '/preorders'
   const context = [
-    item.customer_id !== null ? customerName(item.customer_id) : null,
-    item.product_id !== null ? productName(item.product_id) : null,
-    item.supplier_id !== null ? supplierName(item.supplier_id) : null,
+    item.customer_id !== null ? customerById[item.customer_id]?.name : null,
+    item.product_id !== null ? productById[item.product_id]?.name : null,
+    item.supplier_id !== null ? supplierById[item.supplier_id]?.name : null,
   ].filter((value): value is string => Boolean(value))
 
   return (
